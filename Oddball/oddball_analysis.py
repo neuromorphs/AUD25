@@ -1,4 +1,4 @@
-from typing import Tuple
+from typing import List, Tuple
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -83,7 +83,7 @@ def find_tone_examples(
     standard and deviant tone arrays.
     """
     freq = teeger(audio_waveform[0, :])
-    freqm = medfilt(freq, 7)
+    freqm = medfilt(freq, 7)  # Smooth freqs to remove glitches
 
     labels = label_tone_blips(freqm)
     standard_label = 1
@@ -131,3 +131,98 @@ def find_tone_examples(
     deviant_tone = audio_waveform[0, deviant_locs[0] : deviant_locs[1]]
 
     return standard_tone, deviant_tone
+
+
+def find_all_tone_starts(
+    audio_waveform: NDArray,
+    pulse_template: NDArray,
+    min_tone_separation=10000,
+    sampling_rate: int = 25000,
+) -> NDArray:
+    # Perform cross-correlation to find the start of each pulse in the overall
+    # audio waveform. Return the answer in sample counts.
+    correlation = correlate(audio_waveform, pulse_template, mode="valid")
+    hc = hilbert(correlation)
+    hcm = medfilt(np.abs(hc), 15)
+    plt.plot(np.arange(hcm.shape[0]) / sampling_rate, hcm)
+    plt.xlabel("Time (s)")
+    plt.ylabel("Hilbert of Correlation Value")
+    plt.title("Hilbert of Cross-correlation of waveform and pulse template")
+    peak_indices, _ = find_peaks(
+        hcm, height=np.max(hcm) * 0.5, distance=min_tone_separation
+    )
+    return peak_indices
+
+
+def butter_bandpass(lowcut: float, highcut: float, fs: float = 25000, order=2):
+    nyq = 0.5 * fs
+    low = lowcut / nyq
+    high = highcut / nyq
+    b, a = butter(order, [low, high], btype="band")
+    return b, a
+
+
+def butter_bandpass_filter(
+    data: NDArray,
+    lowcut: float = 1,
+    highcut: float = 15,
+    fs: float = 25000,
+    order=2,
+    axis=1,
+):
+    b, a = butter_bandpass(lowcut, highcut, fs, order=order)
+    y = filtfilt(b, a, data, axis=axis)
+    return y
+
+
+def filter_eeg(
+    rereferenced_eeg: NDArray,
+    sampling_rate: int = 25000,
+) -> NDArray:
+    # Example usage: Bandpass filter the audio_waveform between 100 Hz and 1000 Hz
+    lowcut_freq = 1  # Hz
+    highcut_freq = 15  # Hz
+    filtered_eeg = butter_bandpass_filter(
+        rereferenced_eeg, lowcut_freq, highcut_freq, sampling_rate, axis=1, order=2
+    )
+    return filtered_eeg
+
+
+def model_with_ica(
+    filtered_eeg: NDArray, sampling_rate: int = 25000, n_components: int = 10
+) -> Tuple[FastICA, NDArray]:
+    ica = FastICA(n_components=n_components, random_state=0)
+    ica_components = ica.fit_transform(filtered_eeg.T)
+
+    j = [
+        i + ica_components[: 10 * sampling_rate, i]
+        for i in range(ica_components.shape[1])
+    ]
+
+    components = np.concatenate(
+        [
+            5 * i + ica_components[: 10 * sampling_rate, i : i + 1]
+            for i in range(ica_components.shape[1])
+        ],
+        axis=1,
+    )
+
+    plt.figure(figsize=(10, 8))
+    plt.plot(np.arange(components.shape[0]) / sampling_rate, components)
+    for i in range(components.shape[1]):
+        plt.text(0, 5 * i, f"IC #{i}")
+        plt.xlabel("Time (s)")
+    return ica, components
+
+
+def filter_ica_channels(
+    ica: FastICA,
+    ica_components: NDArray,
+    bad_channels: List[int] = [2, 5, 6],
+) -> FastICA:
+    ica_components2 = ica_components.copy()  # Num_times x num_factors
+    for i in bad_channels:
+        ica_components2[:, i] = 0
+
+    cleaned_eeg = ica.inverse_transform(ica_components2).T
+    return cleaned_eeg

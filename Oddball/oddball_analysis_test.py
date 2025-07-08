@@ -3,6 +3,7 @@
 import numpy as np
 import oddball_analysis as oddball
 from absl.testing import absltest
+from sklearn.decomposition import FastICA
 
 
 class OddballTests(absltest.TestCase):
@@ -39,6 +40,25 @@ class OddballTests(absltest.TestCase):
         )
         res = oddball.label_tone_blips(a)
         self.assertSequenceEqual(list(res), [0, 0, 0, 0, 1, 1, 1, 0, 2, 2])
+
+    def test_bandpass(self):
+        x = np.zeros((1, 1024))
+        x[0] = 1
+        y = oddball.filter_eeg(x, 1024)
+        # Just make sure it runs.. need to frequency response.
+
+    def test_ica(self):
+        data = np.random.rand(1000, 100)
+        ica, ica_components = oddball.model_with_ica(data)
+        self.assertIsInstance(ica, FastICA)
+        self.assertIsInstance(ica_components, np.ndarray)
+        self.assertEqual(ica_components.shape[1], 10)
+
+        results = oddball.filter_ica_channels(
+            ica, ica_components, bad_channels=[2, 5, 6]
+        )
+        self.assertEqual(data.shape, results.shape)
+        # Just make sure it runs, no functional test yet.
 
 
 if __name__ == "__main__":
