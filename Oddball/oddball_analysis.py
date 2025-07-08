@@ -47,9 +47,32 @@ def find_current_segment(present: NDArray, loc: int, skip_ahead: int = 100) -> N
     return int(start_loc), int(end_loc)
 
 
-present = np.array([0, 0, 0, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0])
-find_current_segment(present, 4, 1)
-# Should be indices 2 and 8
+def label_tone_blips(freqm: NDArray) -> NDArray:
+    """Label each sample of the audio waveform whether it is 0 (no sound),
+    standard tone (1) or deviant tone (2).  The standard is found over the deviant
+    because there are more standard tones.
+    """
+    if freqm.ndim == 1:
+        freqm = freqm.reshape(-1, 1)
+    if freqm.shape[1] == 1:
+        freqm2 = np.concatenate((freqm, freqm, freqm), axis=1)
+
+    # Fit the Teeger results with 3 clusters so we can identify each tone blip
+    gm = GaussianMixture(3, covariance_type="diag")
+    gm.fit(freqm2)
+    labels = gm.predict(freqm2)
+
+    # Find the GMM indices corresponding to the clusters that we want.  Silence
+    # will be most common, and deviants least common.
+    _, counts = np.unique(labels, return_counts=True)
+    zero_label = int(np.argmax(counts))
+    deviant_label = int(np.argmin(counts))
+    standard_label = set(range(3)).difference({zero_label, deviant_label}).pop()
+
+    results = np.zeros(freqm.shape[0], int)
+    results[labels == standard_label] = 1
+    results[labels == deviant_label] = 2
+    return results
 
 
 def find_tone_examples(
@@ -62,21 +85,9 @@ def find_tone_examples(
     freq = teeger(audio_waveform[0, :])
     freqm = medfilt(freq, 7)
 
-    # Create 3d data appropriate for GMM code
-    freqm2 = np.concatenate(
-        (freqm.reshape(-1, 1), freqm.reshape(-1, 1), freqm.reshape(-1, 1)), axis=1
-    )
-    # Fit the Teeger results with 3 clusters so we can identify each tone blip
-    gm = GaussianMixture(3, covariance_type="diag")
-    gm.fit(freqm2)
-    labels = gm.predict(freqm2)
-
-    # Find the GMM indices corresponding to the clusters that we want.  Silence
-    # will be most common, and deviants least common.
-    _, counts = np.unique(labels, return_counts=True)
-    zero_label = int(np.argmax(counts))
-    deviant_label = int(np.argmin(counts))
-    standard_label = set(range(3)).difference({zero_label, deviant_label}).pop()
+    labels = label_tone_blips(freqm)
+    standard_label = 1
+    deviant_label = 2
 
     # Smoth these labels because we often see glitches (because the Teeger
     # operator is sensitive to transitions.)

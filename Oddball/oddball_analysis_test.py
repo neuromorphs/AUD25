@@ -17,6 +17,29 @@ class OddballTests(absltest.TestCase):
         y2 = np.mean(oddball.teeger(x2))
         self.assertAlmostEqual(4 * y, y2, delta=1e-4)
 
+    def test_find_segment(self):
+        present = np.array([0, 0, 0, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0])
+        ans = oddball.find_current_segment(present, 4, 1)
+        self.assertSequenceEqual(ans, (2, 8))
+
+    def test_label_tone_blips(self):
+        a = np.asarray(
+            [
+                0,
+                0,
+                0,
+                0,
+                4,
+                4,
+                4,
+                0,
+                1,
+                1,
+            ]
+        )
+        res = oddball.label_tone_blips(a)
+        self.assertSequenceEqual(list(res), [0, 0, 0, 0, 1, 1, 1, 0, 2, 2])
+
 
 if __name__ == "__main__":
     absltest.main()
