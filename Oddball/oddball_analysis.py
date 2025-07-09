@@ -180,10 +180,13 @@ def filter_eeg(
     return y
 
 def model_with_ica(
-    filtered_eeg: NDArray, sampling_rate: int = 25000, n_components: int = 10
+    filtered_eeg: NDArray, # Shape n_samples x n_features
+    sampling_rate: int = 25000, n_components: int = 10
 ) -> Tuple[FastICA, NDArray]:
+    assert filtered_eeg.ndim == 2
+    assert filtered_eeg.shape[0] > filtered_eeg.shape[1]
     ica = FastICA(n_components=n_components, random_state=0)
-    ica_components = ica.fit_transform(filtered_eeg.T)
+    ica_components = ica.fit_transform(filtered_eeg)
 
     j = [
         i + ica_components[: 10 * sampling_rate, i]
