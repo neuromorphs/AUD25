@@ -1,4 +1,4 @@
-# import matplotlib.pyplot as plt
+import matplotlib.pyplot as plt
 
 import numpy as np
 import oddball_analysis as oddball
@@ -42,10 +42,45 @@ class OddballTests(absltest.TestCase):
         self.assertSequenceEqual(list(res), [0, 0, 0, 0, 1, 1, 1, 0, 2, 2])
 
     def test_bandpass(self):
-        x = np.zeros((1, 1024))
-        x[0] = 1
-        y = oddball.filter_eeg(x, 1024)
-        # Just make sure it runs.. need to frequency response.
+        x = np.zeros((1, 16384))
+        fs = 16000
+        lowcut = 500
+        highcut = 2000
+        order = 4
+        # Put impulse in the middle since we are using filtfilt
+        x[0, x.shape[1]//2] = 1
+        plt.clf()
+        y = oddball.filter_eeg(x, lowcut, highcut, fs, axis=1,
+                               order=order, debug_spectrum=True)
+        plt.savefig("test_bandpass_spectrum.png")
+        spectrum = np.fft.fftshift(20 * np.log10(np.abs(np.fft.fft(y[0, :]))))
+        freqs = np.fft.fftshift(np.fft.fftfreq(len(spectrum), 1 / fs))
+        print("freqs", freqs.shape, spectrum.shape)
+        plt.clf()
+        plt.semilogx(freqs, spectrum)
+        plt.xlabel("Frequency (Hz)")
+        plt.ylabel("Magnitude (dB)")
+        plt.xlim([100, 8000])
+        plt.axvline(lowcut, c='r', ls=':')
+        plt.axvline(highcut, c='r', ls=':')
+        plt.grid('on')
+        plt.savefig("test_bandpass_impulse_spectrum.png")
+
+        # Check low-frequency corner
+        fftbin = np.argmin(np.abs(freqs - lowcut))
+        self.assertAlmostEqual(spectrum[fftbin], -6.02, delta=.01)
+        # Check the middle of the passbamd
+        fftbin = np.argmin(np.abs(freqs - highcut))
+        self.assertAlmostEqual(spectrum[fftbin], -6.02, delta=.01)
+        # Check high-frequency corner
+        fftbin = np.argmin(np.abs(freqs - (lowcut + highcut)/2))
+        self.assertAlmostEqual(spectrum[fftbin], 0, delta=.01)
+        # Check one octave below the low cutoff
+        fftbin = np.argmin(np.abs(freqs - lowcut/2))
+        self.assertLess(spectrum[fftbin], -60)
+        # Check one octave above the high cutoff
+        fftbin = np.argmin(np.abs(freqs - highcut*2))
+        self.assertLess(spectrum[fftbin], -60)
 
     def test_ica(self):
         data = np.random.rand(1000, 100)

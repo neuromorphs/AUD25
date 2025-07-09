@@ -6,7 +6,8 @@ from numpy.typing import NDArray
 from scipy.signal import (
     butter,
     correlate,
-    filtfilt,
+    sosfiltfilt,
+    sosfreqz,
     find_peaks,
     hilbert,
     medfilt,
@@ -155,10 +156,7 @@ def find_all_tone_starts(
 
 
 def butter_bandpass(lowcut: float, highcut: float, fs: float = 25000, order=2):
-    nyq = 0.5 * fs
-    low = lowcut / nyq
-    high = highcut / nyq
-    b, a = butter(order, [low, high], btype="band")
+    b, a = butter(order, [lowcut, highcut], fs, btype="band")
     return b, a
 
 
@@ -176,16 +174,23 @@ def butter_bandpass_filter(
 
 
 def filter_eeg(
-    rereferenced_eeg: NDArray,
+    data: NDArray,
+    lowcut_freq: float = 500,  # Hz
+    highcut_freq:float = 1500,  # Hz
     sampling_rate: int = 25000,
+    order: int = 8,
+    axis: int = -1,
+    debug_spectrum: bool = False
 ) -> NDArray:
-    # Example usage: Bandpass filter the audio_waveform between 100 Hz and 1000 Hz
-    lowcut_freq = 1  # Hz
-    highcut_freq = 15  # Hz
-    filtered_eeg = butter_bandpass_filter(
-        rereferenced_eeg, lowcut_freq, highcut_freq, sampling_rate, axis=1, order=2
-    )
-    return filtered_eeg
+    """ Bandpass filter the eeg waveform."""
+    sos = butter(order, [lowcut_freq, highcut_freq], fs=sampling_rate,
+                 output='sos', btype='band')
+    if debug_spectrum:
+      w, h = sosfreqz(sos, fs=sampling_rate, worN=2000)
+      plt.plot(w, 20*np.log10(abs(h)), label="order = %d" % order)
+      plt.grid('on')
+    y = sosfiltfilt(sos, data, axis=axis)
+    return y
 
 
 def model_with_ica(
