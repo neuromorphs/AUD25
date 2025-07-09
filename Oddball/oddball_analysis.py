@@ -232,7 +232,7 @@ def accumulate_erp(eeg_data: NDArray,
   sampling rate must be correct.
   """
   num_channels, num_times = eeg_data.shape
-  assert num_times > num_channels
+  assert num_times > num_channels, f'num_times {num_times} <= num_channels {num_channels}'
   erp = 0
   count = 0
   for loc in locs:
