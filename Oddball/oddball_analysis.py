@@ -195,14 +195,16 @@ def model_with_ica(
 
     components = np.concatenate(
         [
-            5 * i + ica_components[: 10 * sampling_rate, i : i + 1]
+            5 * i + ica_components[:, i : i + 1]
             for i in range(ica_components.shape[1])
         ],
         axis=1,
     )
 
     plt.figure(figsize=(10, 8))
-    plt.plot(np.arange(components.shape[0]) / sampling_rate, components)
+    num_points_to_plot = min(components.shape[0], 10 * sampling_rate)
+    plt.plot(np.arange(num_points_to_plot) / sampling_rate,
+             components[:num_points_to_plot, :])
     for i in range(components.shape[1]):
         plt.text(0, 5 * i, f"IC #{i}")
         plt.xlabel("Time (s)")
