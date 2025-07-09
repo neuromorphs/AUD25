@@ -213,12 +213,12 @@ def filter_ica_channels(
     ica: FastICA,
     ica_components: NDArray,
     bad_channels: List[int] = [2, 5, 6],
-) -> FastICA:
+) -> NDArray:
     ica_components2 = ica_components.copy()  # Num_times x num_factors
     for i in bad_channels:
         ica_components2[:, i] = 0
 
-    cleaned_eeg = ica.inverse_transform(ica_components2).T
+    cleaned_eeg = ica.inverse_transform(ica_components2)
     return cleaned_eeg
 
 def accumulate_erp(eeg_data: NDArray,
@@ -244,3 +244,20 @@ def accumulate_erp(eeg_data: NDArray,
       erp += eeg
       count += 1
   return erp/count
+
+
+def downsample_eeg(eeg_data: NDArray,
+                 sampling_rate: float,
+                 factor: int) -> NDArray:
+  """Downsample the EEG data (num_channels x num_times) by an integer factor.
+  Must do the anti-aliasing (low pass filter) before calling this routine.
+  """
+  num_channels, num_samples = eeg_data.shape
+  new_sampling_rate = sampling_rate / factor
+  num_new_samples = int(num_samples * new_sampling_rate / sampling_rate)
+
+  # Resample each channel independently
+  resampled_eeg_data = np.zeros((eeg_data.shape[0], num_new_samples))
+  for i in range(eeg_data.shape[0]):
+    resampled_eeg_data[i, :] = resample(eeg_data[i, :], num_new_samples)
+  return resampled_eeg_data
