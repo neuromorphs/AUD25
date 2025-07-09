@@ -176,13 +176,13 @@ def butter_bandpass_filter(
 def filter_eeg(
     data: NDArray,
     lowcut_freq: float = 500,  # Hz
-    highcut_freq:float = 1500,  # Hz
+    highcut_freq: float = 1500,  # Hz
     sampling_rate: int = 25000,
     order: int = 8,
     axis: int = -1,
     debug_spectrum: bool = False
 ) -> NDArray:
-    """ Bandpass filter the eeg waveform."""
+    # Example usage: Bandpass filter the eeg waveform .z
     sos = butter(order, [lowcut_freq, highcut_freq], fs=sampling_rate,
                  output='sos', btype='band')
     if debug_spectrum:
@@ -191,7 +191,6 @@ def filter_eeg(
       plt.grid('on')
     y = sosfiltfilt(sos, data, axis=axis)
     return y
-
 
 def model_with_ica(
     filtered_eeg: NDArray, sampling_rate: int = 25000, n_components: int = 10
