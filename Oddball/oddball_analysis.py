@@ -217,3 +217,27 @@ def filter_ica_channels(
 
     cleaned_eeg = ica.inverse_transform(ica_components2).T
     return cleaned_eeg
+
+def accumulate_erp(eeg_data: NDArray,
+                   locs: NDArray, # In seconds
+                   sampling_rate: float = 25000,
+                   num_samples: int = 12500,
+                   pre_samples: int = 0,
+                   remove_baseline: bool = False) -> NDArray:
+  """Average the EEG response for num_samples samples starting at each
+  location in the locs argument.  The locations are in seconds, so the
+  sampling rate must be correct.
+  """
+  num_channels, num_times = eeg_data.shape
+  assert num_times > num_channels
+  erp = 0
+  count = 0
+  for loc in locs:
+    loc = int(loc*sampling_rate - pre_samples)
+    if loc + num_samples < eeg_data.shape[1]:
+      eeg = eeg_data[:, loc:loc+num_samples]
+      if remove_baseline and num_samples > 0:
+        eeg -= np.mean(eeg[:, :pre_samples], axis=1, keepdims=True)
+      erp += eeg
+      count += 1
+  return erp/count
