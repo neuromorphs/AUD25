@@ -237,7 +237,7 @@ def accumulate_erp(eeg_data: NDArray,
   count = 0
   for loc in locs:
     loc = int(loc*sampling_rate - pre_samples)
-    if loc + num_samples < eeg_data.shape[1]:
+    if loc + num_samples < eeg_data.shape[0]:
       eeg = eeg_data[:, loc:loc+num_samples]
       if remove_baseline and num_samples > 0:
         eeg -= np.mean(eeg[:, :pre_samples], axis=1, keepdims=True)
