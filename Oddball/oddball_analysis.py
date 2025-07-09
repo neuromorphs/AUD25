@@ -160,19 +160,6 @@ def butter_bandpass(lowcut: float, highcut: float, fs: float = 25000, order=2):
     return b, a
 
 
-def butter_bandpass_filter(
-    data: NDArray,
-    lowcut: float = 1,
-    highcut: float = 15,
-    fs: float = 25000,
-    order=2,
-    axis=1,
-):
-    b, a = butter_bandpass(lowcut, highcut, fs, order=order)
-    y = filtfilt(b, a, data, axis=axis)
-    return y
-
-
 def filter_eeg(
     data: NDArray,
     lowcut_freq: float = 500,  # Hz
