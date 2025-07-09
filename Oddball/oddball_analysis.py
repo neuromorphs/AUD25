@@ -6,12 +6,12 @@ from numpy.typing import NDArray
 from scipy.signal import (
     butter,
     correlate,
-    sosfiltfilt,
-    sosfreqz,
     find_peaks,
     hilbert,
     medfilt,
     resample,
+    sosfiltfilt,
+    sosfreqz,
 )
 
 from sklearn.decomposition import FastICA
@@ -27,8 +27,9 @@ def teeger(x: NDArray) -> NDArray:
     # https://ieeexplore.ieee.org/document/8553703/
     return x[1:-1] ** 2 - x[:-2] * x[2:]
 
+    # Helper function
 
-# Helper function
+
 def find_current_segment(present: NDArray, loc: int, skip_ahead: int = 100) -> NDArray:
     """Given a Boolean truth array and the location of a true value, find the
     start and ending locations of the true segment.
@@ -167,21 +168,24 @@ def filter_eeg(
     sampling_rate: int = 25000,
     order: int = 8,
     axis: int = -1,
-    debug_spectrum: bool = False
+    debug_spectrum: bool = False,
 ) -> NDArray:
     # Example usage: Bandpass filter the eeg waveform .z
-    sos = butter(order, [lowcut_freq, highcut_freq], fs=sampling_rate,
-                 output='sos', btype='band')
+    sos = butter(
+        order, [lowcut_freq, highcut_freq], fs=sampling_rate, output="sos", btype="band"
+    )
     if debug_spectrum:
-      w, h = sosfreqz(sos, fs=sampling_rate, worN=2000)
-      plt.plot(w, 20*np.log10(abs(h)), label="order = %d" % order)
-      plt.grid('on')
+        w, h = sosfreqz(sos, fs=sampling_rate, worN=2000)
+        plt.plot(w, 20 * np.log10(abs(h)), label="order = %d" % order)
+        plt.grid("on")
     y = sosfiltfilt(sos, data, axis=axis)
     return y
 
+
 def model_with_ica(
-    filtered_eeg: NDArray, # Shape n_samples x n_features
-    sampling_rate: int = 25000, n_components: int = 10
+    filtered_eeg: NDArray,  # Shape n_samples x n_features
+    sampling_rate: int = 25000,
+    n_components: int = 10,
 ) -> Tuple[FastICA, NDArray]:
     assert filtered_eeg.ndim == 2
     assert filtered_eeg.shape[0] > filtered_eeg.shape[1]
@@ -194,17 +198,16 @@ def model_with_ica(
     ]
 
     components = np.concatenate(
-        [
-            5 * i + ica_components[:, i : i + 1]
-            for i in range(ica_components.shape[1])
-        ],
+        [5 * i + ica_components[:, i : i + 1] for i in range(ica_components.shape[1])],
         axis=1,
     )
 
     plt.figure(figsize=(10, 8))
     num_points_to_plot = min(components.shape[0], 10 * sampling_rate)
-    plt.plot(np.arange(num_points_to_plot) / sampling_rate,
-             components[:num_points_to_plot, :])
+    plt.plot(
+        np.arange(num_points_to_plot) / sampling_rate,
+        components[:num_points_to_plot, :],
+    )
     for i in range(components.shape[1]):
         plt.text(0, 5 * i, f"IC #{i}")
         plt.xlabel("Time (s)")
@@ -223,45 +226,48 @@ def filter_ica_channels(
     cleaned_eeg = ica.inverse_transform(ica_components2)
     return cleaned_eeg
 
-def accumulate_erp(eeg_data: NDArray,
-                   locs: NDArray, # In seconds
-                   sampling_rate: float = 25000,
-                   num_samples: int = 12500,
-                   pre_samples: int = 0,
-                   remove_baseline: bool = False) -> NDArray:
-  """Average the EEG response for num_samples samples starting at each
-  location in the locs argument.  The locations are in seconds, so the
-  sampling rate must be correct.
-  """
-  num_channels, num_times = eeg_data.shape
-  assert num_times > num_channels, f'num_times {num_times} <= num_channels {num_channels}'
-  erp = 0
-  count = 0
-  for loc in locs:
-    loc = int(loc*sampling_rate - pre_samples)
-    if loc + num_samples < eeg_data.shape[1]:
-      eeg = eeg_data[:, loc:loc+num_samples]
-      if remove_baseline and num_samples > 0:
-        eeg -= np.mean(eeg[:, :pre_samples], axis=1, keepdims=True)
-      erp += eeg
-      count += 1
-  if count == 0:
-    raise ValueError(f'No valid locations found in {locs}')
-  return erp/count
+
+def accumulate_erp(
+    eeg_data: NDArray,
+    locs: NDArray,  # In seconds
+    sampling_rate: float = 25000,
+    num_samples: int = 12500,
+    pre_samples: int = 0,
+    remove_baseline: bool = False,
+) -> NDArray:
+    """Average the EEG response for num_samples samples starting at each
+    location in the locs argument.  The locations are in seconds, so the
+    sampling rate must be correct.
+    """
+    num_channels, num_times = eeg_data.shape
+    assert (
+        num_times > num_channels
+    ), f"num_times {num_times} <= num_channels {num_channels}"
+    erp = 0
+    count = 0
+    for loc in locs:
+        loc = int(loc * sampling_rate - pre_samples)
+        if loc + num_samples < eeg_data.shape[1]:
+            eeg = eeg_data[:, loc : loc + num_samples]
+            if remove_baseline and num_samples > 0:
+                eeg -= np.mean(eeg[:, :pre_samples], axis=1, keepdims=True)
+            erp += eeg
+            count += 1
+    if count == 0:
+        raise ValueError(f"No valid locations found in {locs}")
+    return erp / count
 
 
-def downsample_eeg(eeg_data: NDArray,
-                 sampling_rate: float,
-                 factor: int) -> NDArray:
-  """Downsample the EEG data (num_channels x num_times) by an integer factor.
-  Must do the anti-aliasing (low pass filter) before calling this routine.
-  """
-  num_channels, num_samples = eeg_data.shape
-  new_sampling_rate = sampling_rate / factor
-  num_new_samples = int(num_samples * new_sampling_rate / sampling_rate)
+def downsample_eeg(eeg_data: NDArray, sampling_rate: float, factor: int) -> NDArray:
+    """Downsample the EEG data (num_channels x num_times) by an integer factor.
+    Must do the anti-aliasing (low pass filter) before calling this routine.
+    """
+    num_channels, num_samples = eeg_data.shape
+    new_sampling_rate = sampling_rate / factor
+    num_new_samples = int(num_samples * new_sampling_rate / sampling_rate)
 
-  # Resample each channel independently
-  resampled_eeg_data = np.zeros((eeg_data.shape[0], num_new_samples))
-  for i in range(eeg_data.shape[0]):
-    resampled_eeg_data[i, :] = resample(eeg_data[i, :], num_new_samples)
-  return resampled_eeg_data
+    # Resample each channel independently
+    resampled_eeg_data = np.zeros((eeg_data.shape[0], num_new_samples))
+    for i in range(eeg_data.shape[0]):
+        resampled_eeg_data[i, :] = resample(eeg_data[i, :], num_new_samples)
+    return resampled_eeg_data
