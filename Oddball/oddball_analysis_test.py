@@ -70,15 +70,19 @@ class OddballTests(absltest.TestCase):
         # Check low-frequency corner
         fftbin = np.argmin(np.abs(freqs - lowcut))
         self.assertAlmostEqual(spectrum[fftbin], -6.02, delta=.01)
-        # Check the middle of the passbamd
+
+        # Check high-frequency corner
         fftbin = np.argmin(np.abs(freqs - highcut))
         self.assertAlmostEqual(spectrum[fftbin], -6.02, delta=.01)
-        # Check high-frequency corner
+
+        # Check the middle of the passbamd
         fftbin = np.argmin(np.abs(freqs - (lowcut + highcut)/2))
         self.assertAlmostEqual(spectrum[fftbin], 0, delta=.01)
+
         # Check one octave below the low cutoff
         fftbin = np.argmin(np.abs(freqs - lowcut/2))
         self.assertLess(spectrum[fftbin], -60)
+
         # Check one octave above the high cutoff
         fftbin = np.argmin(np.abs(freqs - highcut*2))
         self.assertLess(spectrum[fftbin], -60)
