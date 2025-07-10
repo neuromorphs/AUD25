@@ -508,8 +508,9 @@ flags.DEFINE_multi_integer("bad_channels", [],
 
 def save_fig(fig: plt.Figure, plot_dir: str, name: str) -> None:
     """Save a matplotlib figure to a file."""
+    print('Writing data to', os.path.join(plot_dir, name))
     if not os.path.exists(plot_dir):
-        os.mkdir(plot_dir)
+        os.makedirs(plot_dir)
     fig.savefig(os.path.join(plot_dir, name))
 
 
