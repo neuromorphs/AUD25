@@ -235,6 +235,7 @@ def find_tone_examples(
         plt.xlim([first_standard_loc - 1000, first_standard_loc + 1000])
         plt.ylabel("Standard")
         plt.legend()
+        plt.title('Finding Standard and Deviant Tone Examples')
 
         plt.subplot(2, 1, 2)
         plt.plot(labels, label="GMM Labels")
