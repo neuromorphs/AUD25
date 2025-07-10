@@ -1,9 +1,12 @@
 import csv
 import os
-from typing import List, Tuple
+from typing import Any, List, Tuple
 
 import matplotlib.pyplot as plt
+import mne
 import numpy as np
+
+from absl import app, flags
 from numpy.typing import NDArray
 from scipy.signal import (
     butter,
@@ -20,7 +23,25 @@ from sklearn.decomposition import FastICA
 from sklearn.mixture import GaussianMixture
 
 
-def extract_waveforms(raw) -> Tuple[NDArray, NDArray, NDArray, float]:
+def read_bv_raw_data(
+    data_dir: str, header_file: str
+) -> Any:  # mne.io.brainvision.brainvision.RawBrainVision:
+    # Specify the path to your BrainVision header file
+    vhdr_file = os.path.join(data_dir, header_file)
+
+    # Read the BrainVision data
+    raw = mne.io.read_raw_brainvision(vhdr_file, preload=True)
+
+    # Print some basic information about the data
+    print(raw.info)
+    print(f"Channel names: {raw.ch_names}")
+    print(f"Number of samples: {raw.n_times}")
+    return raw
+
+
+def extract_waveforms(
+    raw: Any,  # mne.io.brainvision.brainvision.RawBrainVision,
+) -> Tuple[NDArray, NDArray, NDArray, float]:
     """Extract the audio and EEG data from the BV file."""
     # Access the EEG data array
     eeg_data = raw.get_data()
@@ -266,7 +287,7 @@ def filter_eeg(
     data: NDArray,
     lowcut_freq: float = 500,  # Hz
     highcut_freq: float = 1500,  # Hz
-    sampling_rate: int = 25000,
+    sampling_rate: float = 25000,
     order: int = 8,
     axis: int = -1,
     debug_spectrum: bool = False,
@@ -285,7 +306,7 @@ def filter_eeg(
 
 def model_with_ica(
     filtered_eeg: NDArray,  # Shape n_samples x n_features
-    sampling_rate: int = 25000,
+    sampling_rate: float = 25000,
     n_components: int = 10,
 ) -> Tuple[FastICA, NDArray]:
     assert filtered_eeg.ndim == 2
@@ -343,7 +364,7 @@ def accumulate_erp(
     num_channels, num_times = eeg_data.shape
     assert (
         num_times > num_channels
-    ), f"num_times {num_times} <= num_channels {num_channels}"
+    ), f"num_times {num_times} is not > num_channels {num_channels}"
     erp = 0
     count = 0
     for loc in locs:
@@ -372,3 +393,142 @@ def downsample_eeg(eeg_data: NDArray, sampling_rate: float, factor: int) -> NDAr
     for i in range(eeg_data.shape[0]):
         resampled_eeg_data[i, :] = resample(eeg_data[i, :], num_new_samples)
     return resampled_eeg_data
+
+
+def plot_audio_waveforms(
+    standard_average_sound: NDArray,
+    deviant_average_sound: NDArray,
+    sampling_rate: float = 25000,
+    pre_samples=0,
+):
+    plt.clf()
+    num_samples = int(0.100 * sampling_rate)  # To plot
+    plt.subplot(2, 1, 1)
+    plt.plot(
+        np.arange(num_samples) / sampling_rate * 1000,
+        standard_average_sound[0, :num_samples],
+    )
+    plt.ylabel("Standard")
+    plt.axvline(pre_samples / sampling_rate * 1000, c="r")
+    plt.subplot(2, 1, 2)
+    plt.plot(
+        np.arange(num_samples) / sampling_rate * 1000,
+        deviant_average_sound[0, :num_samples],
+    )
+    plt.ylabel("Deviant")
+    plt.xlabel("Time (ms)")
+    plt.axvline(pre_samples / sampling_rate * 1000, c="r")
+    # We should see two clear sinusoids at different frequencies.
+
+
+def plot_erp_images(
+    normal_erp: NDArray,
+    deviant_erp: NDArray,
+    pre_samples: int = 0,
+    sampling_rate: float = 25000,
+):
+    plt.clf()
+    time_scale = (np.arange(normal_erp.shape[1]) - pre_samples) / sampling_rate * 1000
+
+    extent = [np.min(time_scale), np.max(time_scale), 0, normal_erp.shape[0]]
+    plt.subplot(2, 1, 1)
+    plt.imshow(normal_erp, extent=extent)
+    plt.axis("auto")
+    plt.ylabel("Standard")
+    plt.colorbar()
+    plt.subplot(2, 1, 2)
+    plt.imshow(deviant_erp, extent=extent)
+    plt.ylabel("Deviant")
+    plt.axis("auto")
+    plt.xlabel("Time (ms)")
+    plt.colorbar()
+
+
+FLAGS = flags.FLAGS
+
+flags.DEFINE_string("data_dir", "/tmp", "Directory where the raw EEG BV dat is stored.")
+flags.DEFINE_string(
+    "header_file", "/tmp", "Which header file (and its associated files) to read."
+)
+
+flags.DEFINE_integer("lowcut", 1,
+                     "Frequency for low-side of EEG bandpass filter")
+flags.DEFINE_integer("highcut", 15,
+                     "Frequency for high-side of EEG bandpass filter")
+flags.DEFINE_string("plot_dir", "plots",
+                     "Where to store debugging plots")
+flags.DEFINE_multi_integer("bad_channels", [],
+                     "List of bad channels to remove.")
+
+
+def save_fig(fig: plt.Figure, plot_dir: str, name: str) -> None:
+    """Save a matplotlib figure to a file."""
+    if not os.path.exists(plot_dir):
+        os.mkdir(plot_dir)
+    fig.savefig(os.path.join(plot_dir, name))
+
+
+def main(*argv):
+    raw = read_bv_raw_data(FLAGS.data_dir, FLAGS.header_file)
+
+    (audio_waveform, full_audio_waveform,
+     eeg_data, sampling_rate) = extract_waveforms(raw)
+
+    standard_tone, deviant_tone = find_tone_examples(audio_waveform,
+                                                     debug_plots=True)
+
+    standard_locs, deviant_locs = get_event_locs(
+        FLAGS.data_dir, full_audio_waveform, standard_tone, deviant_tone,
+        sampling_rate
+    )
+
+    rereferenced_eeg = rereference_eeg(eeg_data, ["Cz"])
+
+    filtered_eeg = filter_eeg(
+        rereferenced_eeg, FLAGS.lowcut, FLAGS.highcut,
+        sampling_rate, axis=1, order=6
+    )
+
+    ica, ica_components = model_with_ica(filtered_eeg.T, sampling_rate)
+    save_fig(plt.gcf(), FLAGS.plot_dir, "ICA_components.png")
+
+    cleaned_eeg = filter_ica_channels(ica, ica_components,
+    FLAGS.bad_channels).T
+
+    # Let's first make sure we get the right answer if we use the ERP o
+    # function to process the audio waveforms.
+
+    pre_samples = int(0.05 * sampling_rate)
+    standard_average_sound = accumulate_erp(
+        full_audio_waveform, standard_locs, pre_samples=pre_samples
+    )
+    deviant_average_sound = accumulate_erp(
+        full_audio_waveform, deviant_locs, pre_samples=pre_samples
+    )
+    plot_audio_waveforms(
+        standard_average_sound, deviant_average_sound,
+        sampling_rate, pre_samples
+    )
+    save_fig(plt.gcf(), FLAGS.plot_dir, "ERP_audio_waveforms.png")
+
+    # Now we can calculate the ERP for the EEG data.
+    normal_erp = accumulate_erp(
+        cleaned_eeg,
+        standard_locs,
+        sampling_rate,
+        pre_samples=pre_samples,
+        remove_baseline=True,
+    )
+    deviant_erp = accumulate_erp(
+        cleaned_eeg,
+        deviant_locs,
+        sampling_rate,
+        pre_samples=pre_samples,
+        remove_baseline=True,
+    )
+    plot_erp_images(normal_erp, deviant_erp, pre_samples, sampling_rate)
+    save_fig(plt.gcf(), FLAGS.plot_dir, "ERP_images.png")
+
+
+if __name__ == "__main__":
+    app.run(main)
