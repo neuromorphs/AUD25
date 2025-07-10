@@ -333,6 +333,7 @@ def model_with_ica(
     for i in range(components.shape[1]):
         plt.text(0, 5 * i, f"IC #{i}")
         plt.xlabel("Time (s)")
+    plt.title('ICA Components')
     return ica, components
 
 
@@ -342,6 +343,7 @@ def filter_ica_channels(
     bad_channels: List[int] = [2, 5, 6],
 ) -> NDArray:
     ica_components2 = ica_components.copy()  # Num_times x num_factors
+    print('Removing ICA channels: ', bad_channels)
     for i in bad_channels:
         ica_components2[:, i] = 0
 
@@ -410,6 +412,8 @@ def plot_audio_waveforms(
     )
     plt.ylabel("Standard")
     plt.axvline(pre_samples / sampling_rate * 1000, c="r")
+    plt.title('Comparing Arverage Recorded Sounds for '
+              'Standard and Deviant Tones')
     plt.subplot(2, 1, 2)
     plt.plot(
         np.arange(num_samples) / sampling_rate * 1000,
@@ -419,7 +423,6 @@ def plot_audio_waveforms(
     plt.xlabel("Time (ms)")
     plt.axvline(pre_samples / sampling_rate * 1000, c="r")
     # We should see two clear sinusoids at different frequencies.
-
 
 def plot_erp_images(
     normal_erp: NDArray,
@@ -436,6 +439,7 @@ def plot_erp_images(
     plt.axis("auto")
     plt.ylabel("Standard")
     plt.colorbar()
+    plt.title('Comparing ERPs for Standard and Deviant Tones')
     plt.subplot(2, 1, 2)
     plt.imshow(deviant_erp, extent=extent)
     plt.ylabel("Deviant")
@@ -443,12 +447,53 @@ def plot_erp_images(
     plt.xlabel("Time (ms)")
     plt.colorbar()
 
+def plot_all_erp_channels(normal_erp, deviant_erp, channels,
+                          pre_samples: int = 0, sampling_rate: float = 25000):
+  plt.clf()
+  time_scale = (np.arange(normal_erp.shape[1]) - pre_samples)/sampling_rate*1000
+
+  max = np.maximum(np.max(np.abs(normal_erp[channels, :])),
+                   np.max(np.abs(deviant_erp[channels, :])))
+  plt.subplot(2, 1, 1)
+  plt.plot(time_scale, normal_erp[channels, :].T)
+  plt.ylabel('Standard Tone')
+  plt.ylim([-max, max])
+  plt.title('Comparing ERPs for Standard and Deviant Tones')
+  # plt.xlabel('Time (ms)');
+
+  plt.subplot(2, 1, 2)
+  plt.plot(time_scale, deviant_erp[channels, :].T)
+  plt.ylabel('Deviant Tone Results')
+  plt.ylim([-max, max])
+  plt.xlabel('Time (ms)');
+
+
+def plot_all_erp_diff(normal_erp, deviant_erp, channels: List[int],
+                          pre_samples: int = 0, sampling_rate: float = 25000,
+                          bad_channels: List[int] = []):
+  time_scale = (np.arange(normal_erp.shape[1]) - pre_samples)/sampling_rate*1000
+
+  normal_average = np.mean(normal_erp[channels, :], axis=0)
+  deviant_average = np.mean(deviant_erp[channels, :], axis=0)
+  plt.clf()
+  plt.plot(time_scale, normal_average,
+          label='Standard')
+  plt.plot(time_scale, deviant_average,
+          label='Deviant')
+  plt.plot(time_scale, deviant_average - normal_average,
+          label='Difference')
+  plt.xlabel('Time (ms)')
+  plt.ylabel('$\mu$V')
+  plt.title(f'Average ERPs for Channels {channels} - Removing ICA #{bad_channels}')
+  plt.legend();
+
 
 FLAGS = flags.FLAGS
 
 flags.DEFINE_string("data_dir", "/tmp", "Directory where the raw EEG BV dat is stored.")
 flags.DEFINE_string(
-    "header_file", "/tmp", "Which header file (and its associated files) to read."
+    "header_file", "/tmp",
+    "Which header file (and its associated files) to read."
 )
 
 flags.DEFINE_integer("lowcut", 1,
@@ -456,9 +501,9 @@ flags.DEFINE_integer("lowcut", 1,
 flags.DEFINE_integer("highcut", 15,
                      "Frequency for high-side of EEG bandpass filter")
 flags.DEFINE_string("plot_dir", "plots",
-                     "Where to store debugging plots")
+                    "Where to store debugging plots")
 flags.DEFINE_multi_integer("bad_channels", [],
-                     "List of bad channels to remove.")
+                           "List of bad channels to remove.")
 
 
 def save_fig(fig: plt.Figure, plot_dir: str, name: str) -> None:
@@ -493,7 +538,7 @@ def main(*argv):
     save_fig(plt.gcf(), FLAGS.plot_dir, "ICA_components.png")
 
     cleaned_eeg = filter_ica_channels(ica, ica_components,
-    FLAGS.bad_channels).T
+                                      FLAGS.bad_channels).T
 
     # Let's first make sure we get the right answer if we use the ERP o
     # function to process the audio waveforms.
@@ -528,6 +573,16 @@ def main(*argv):
     )
     plot_erp_images(normal_erp, deviant_erp, pre_samples, sampling_rate)
     save_fig(plt.gcf(), FLAGS.plot_dir, "ERP_images.png")
+
+    plot_all_erp_channels(normal_erp, deviant_erp, list(range(32)),
+                          pre_samples=pre_samples,
+                          sampling_rate=sampling_rate)
+    save_fig(plt.gcf(), FLAGS.plot_dir, "ERP_all_channels.png")
+
+    plot_all_erp_diff(normal_erp, deviant_erp, [31],
+                      pre_samples=pre_samples,
+                      bad_channels=FLAGS.bad_channels)
+    save_fig(plt.gcf(), FLAGS.plot_dir, "ERP_channel_dif.png")
 
 
 if __name__ == "__main__":
