@@ -49,8 +49,7 @@ class OddballTests(absltest.TestCase):
         highcut = 2000
         order = 4
         # Put impulse in the middle since we are using filtfilt
-        # x[0, x.shape[1]//2] = 1
-        x[0, 0] = 1
+        x[0, x.shape[1]//2] = 1
         plt.clf()
         y = oddball.filter_eeg(x, lowcut, highcut, fs, axis=1,
                                order=order, debug_spectrum=True)
