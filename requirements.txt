@@ -1,5 +1,4 @@
 absl_py==2.0.0
-csv>=1.0
 matplotlib>3.9
 numpy>2
 scikit_learn==1.6.1
