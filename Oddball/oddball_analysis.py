@@ -18,6 +18,26 @@ from sklearn.decomposition import FastICA
 from sklearn.mixture import GaussianMixture
 
 
+def extract_waveforms(raw) -> Tuple[NDArray, NDArray, NDArray, float]:
+    """Extract the audio and EEG data from the BV file."""
+    # Access the EEG data array
+    eeg_data = raw.get_data()
+    print(f"Shape of EEG data: {eeg_data.shape}")
+
+    full_audio_waveform = eeg_data[-1:, :].copy()
+    sampling_rate = int(
+        raw.info["sfreq"]
+    )  # Getting the sampling rate from the raw object
+
+    eeg_data = eeg_data[:31, :]  # Remove the audio channel
+    eeg_data = np.concatenate((eeg_data, np.zeros((1, eeg_data.shape[1]))), axis=0)
+    raw.ch_names[31] = "Cz"
+
+    audio_waveform = full_audio_waveform[:, : 30 * sampling_rate]
+    # Audio(data=audio_waveform[:, 10*sampling_rate:20*sampling_rate], rate=sampling_rate)
+    return audio_waveform, full_audio_waveform, eeg_data, sampling_rate
+
+
 def teeger(x: NDArray) -> NDArray:
     """Compute the Teeger energy operator over a waveform.
     The result is a signal that is the product of the instanenous freqeuncy
@@ -28,6 +48,85 @@ def teeger(x: NDArray) -> NDArray:
     return x[1:-1] ** 2 - x[:-2] * x[2:]
 
     # Helper function
+
+
+def rereference_eeg(
+    eeg_data: NDArray, reference_channels: List[str] = ["Cz"]
+) -> NDArray:
+    """Re-reference the EEG data, which is supplied in shape
+    num_channels x num_times
+    """
+    assert eeg_data.ndim == 2
+    assert eeg_data.shape[1] > eeg_data.shape[0]
+    if reference_channels == ["Cz"]:
+        print("Rereferencing data to Cz")
+        # Restore the missing Cz channel
+        rereferenced_eeg = np.concatenate(
+            (eeg_data, np.zeros((1, eeg_data.shape[1]))), axis=0
+        )
+        rereferenced_eeg[31, :] = np.mean(rereferenced_eeg[:31, :], axis=0)
+
+    elif len(reference_channels):
+        print("Rereferencing data to the mean of the listed channels")
+        # Compute mean of the reference channels
+        reference = np.mean(eeg_data[reference_channels, :], axis=0, keepdims=True)
+        rereferenced_eeg = eeg_data - reference
+    else:
+        print("Rereferencing data to the mean of *all* the channels")
+        # Compute the mean of *all* the channels
+        reference = np.mean(eeg_data, axis=0, keepdims=True)
+        rereferenced_eeg = eeg_data - reference
+
+    print("Re-referenced eeg data has shape", rereferenced_eeg.shape)
+    return rereferenced_eeg
+
+
+def tone_times_from_csv(csv_file_path: str) -> Tuple[List[float], List[float]]:
+    standard_tone_times = []
+    deviant_tone_times = []
+
+    # T is from the stimtrack,
+    # S from the Matlab label and includes standard (1) and deviant (2)
+    deviant: str = "??"
+    with open(csv_file_path, "r") as file:
+        csv_reader = csv.reader(file)
+        next(csv_reader)  # This skips the header line
+        for time, ty in csv_reader:
+            if ty[0] == "S":
+                deviant = ty
+            elif ty[0] == "T":
+                if deviant[-1] == "2":
+                    deviant_tone_times.append(float(time))
+                elif deviant[-1] == "1":
+                    standard_tone_times.append(float(time))
+                else:
+                    raise ValueError(f"Unknown tone type: {ty}")
+                deviant = False
+    return standard_tone_times, deviant_tone_times
+
+
+def get_event_locs(
+    data_dir, full_audio_waveform, standard_tone, deviant_tone, sampling_rate
+) -> Tuple[List[float], List[float]]:
+    trigger_filename = os.path.join(data_dir, "triggers.csv")
+    if os.path.exists(trigger_filename):
+        print("Reading triggers.csv")
+        standard_locs, deviant_locs = tone_times_from_csv(
+            os.path.join(data_dir, "triggers.csv")
+        )
+        standard_locs = [x / sampling_rate for x in standard_locs]
+        deviant_locs = [x / sampling_rate for x in deviant_locs]
+    else:
+        print("Finding triggers by cross correlation")
+        standard_locs = (
+            find_all_tone_starts(full_audio_waveform[0, :], standard_tone)
+            / sampling_rate
+        )
+        deviant_locs = (
+            find_all_tone_starts(full_audio_waveform[0, :], deviant_tone)
+            / sampling_rate
+        )
+    return standard_locs, deviant_locs
 
 
 def find_current_segment(present: NDArray, loc: int, skip_ahead: int = 100) -> NDArray:
