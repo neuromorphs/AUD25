@@ -24,8 +24,7 @@ from sklearn.mixture import GaussianMixture
 
 
 def read_bv_raw_data(
-    data_dir: str, header_file: str
-) -> Any:  # mne.io.brainvision.brainvision.RawBrainVision:
+    data_dir: str, header_file: str):  # Can't figure out the right type...
     # Specify the path to your BrainVision header file
     vhdr_file = os.path.join(data_dir, header_file)
 
@@ -40,7 +39,7 @@ def read_bv_raw_data(
 
 
 def extract_waveforms(
-    raw: Any,  # mne.io.brainvision.brainvision.RawBrainVision,
+    raw,  # mne.io.brainvision.brainvision.RawBrainVision,
 ) -> Tuple[NDArray, NDArray, NDArray, float]:
     """Extract the audio and EEG data from the BV file."""
     # Access the EEG data array
@@ -53,11 +52,11 @@ def extract_waveforms(
     )  # Getting the sampling rate from the raw object
 
     eeg_data = eeg_data[:31, :]  # Remove the audio channel
-    eeg_data = np.concatenate((eeg_data, np.zeros((1, eeg_data.shape[1]))), axis=0)
+    eeg_data = np.concatenate((eeg_data, np.zeros((1, eeg_data.shape[1]))),
+                              axis=0)
     raw.ch_names[31] = "Cz"
 
     audio_waveform = full_audio_waveform[:, : 30 * sampling_rate]
-    # Audio(data=audio_waveform[:, 10*sampling_rate:20*sampling_rate], rate=sampling_rate)
     return audio_waveform, full_audio_waveform, eeg_data, sampling_rate
 
 
@@ -483,9 +482,9 @@ def plot_all_erp_diff(normal_erp, deviant_erp, channels: List[int],
   plt.plot(time_scale, deviant_average - normal_average,
           label='Difference')
   plt.xlabel('Time (ms)')
-  plt.ylabel('$\mu$V')
+  plt.ylabel(r'$\mu$V')
   plt.title(f'Average ERPs for Channels {channels} - Removing ICA #{bad_channels}')
-  plt.legend();
+  plt.legend()
 
 
 FLAGS = flags.FLAGS
@@ -521,6 +520,7 @@ def main(*argv):
 
     standard_tone, deviant_tone = find_tone_examples(audio_waveform,
                                                      debug_plots=True)
+    save_fig(plt.gcf(), FLAGS.plot_dir, "Tone_examples.png")
 
     standard_locs, deviant_locs = get_event_locs(
         FLAGS.data_dir, full_audio_waveform, standard_tone, deviant_tone,
