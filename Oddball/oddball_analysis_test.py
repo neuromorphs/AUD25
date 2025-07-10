@@ -11,10 +11,11 @@ class OddballTests(absltest.TestCase):
         # Test that Teeger operator is linear in power
         x = np.sin(2 * np.pi * np.arange(100) / 100)
         y = np.mean(oddball.teeger(x))
-        y2 = np.mean(oddball.teeger(2 * x))
+        y2 = np.mean(oddball.teeger(2 * x))  # Double in amplitude
         self.assertAlmostEqual(4 * y, y2)
 
-        x2 = np.sin(2 * np.pi * 2 * np.arange(100) / 100)
+        # Test that Teeger operator is quadratic in frequency
+        x2 = np.sin(2 * np.pi * 2 * np.arange(100) / 100) # Double in frequency
         y2 = np.mean(oddball.teeger(x2))
         self.assertAlmostEqual(4 * y, y2, delta=1e-4)
 
