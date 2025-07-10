@@ -49,7 +49,8 @@ class OddballTests(absltest.TestCase):
         highcut = 2000
         order = 4
         # Put impulse in the middle since we are using filtfilt
-        x[0, x.shape[1]//2] = 1
+        # x[0, x.shape[1]//2] = 1
+        x[0, 0] = 1
         plt.clf()
         y = oddball.filter_eeg(x, lowcut, highcut, fs, axis=1,
                                order=order, debug_spectrum=True)
@@ -71,9 +72,9 @@ class OddballTests(absltest.TestCase):
         fftbin = np.argmin(np.abs(freqs - lowcut))
         self.assertAlmostEqual(spectrum[fftbin], -6.02, delta=.01)
 
-        # Check high-frequency corner
+        # Check high-frequency corner (One octave above)
         fftbin = np.argmin(np.abs(freqs - highcut))
-        self.assertAlmostEqual(spectrum[fftbin], -6.02, delta=.01)
+        self.assertAlmostEqual(spectrum[fftbin], -6.02, delta=.01) # Double in frequency
 
         # Check the middle of the passbamd
         fftbin = np.argmin(np.abs(freqs - (lowcut + highcut)/2))
