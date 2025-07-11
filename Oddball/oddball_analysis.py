@@ -499,6 +499,17 @@ def plot_all_erp_diff(normal_erp, deviant_erp, channels: List[int],
   plt.legend()
 
 
+def summarize_erp_diff(normal_erp, deviant_erp, channels: List[int]):
+    """Summarize the difference between the standard and deviant ERPs."""
+    def rms(x):
+        return np.sqrt(np.mean(x * x))
+
+    normal_average = np.mean(normal_erp[channels, :], axis=0)
+    deviant_average = np.mean(deviant_erp[channels, :], axis=0)
+    diff = deviant_average - normal_average
+    return rms(normal_average), rms(deviant_average), rms(diff)
+
+
 FLAGS = flags.FLAGS
 
 flags.DEFINE_string("data_dir", "/tmp", "Directory where the raw EEG BV dat is stored.")
@@ -596,6 +607,14 @@ def main(*argv):
                       pre_samples=pre_samples,
                       bad_channels=FLAGS.bad_channels)
     save_fig(plt.gcf(), FLAGS.plot_dir, "ERP_channel_dif.png")
+
+    normal_rms, deviant_rms, diff_rms = summarize_erp_diff(normal_erp,
+                                                           deviant_erp,
+                                                           FLAGS.bad_channels)
+    print(f"Standard RMS: {normal_rms:.3f} uV")
+    print(f"Deviant RMS: {deviant_rms:.3f} uV")
+    print(f"Diff RMS: {diff_rms:.3f} uV")
+    print(f'Diff to Standard: {diff_rms / normal_rms * 100:.2f}%')
 
 
 if __name__ == "__main__":
