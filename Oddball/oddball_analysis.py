@@ -204,12 +204,12 @@ def label_tone_blips(freqm: NDArray) -> NDArray:
     if freqm.ndim == 1:
         freqm = freqm.reshape(-1, 1)
     if freqm.shape[1] == 1:
-        freqm2 = np.concatenate((freqm, freqm, freqm), axis=1)
+        freqm = np.concatenate((freqm, freqm, freqm), axis=1)
 
     # Fit the Teeger results with 3 clusters so we can identify each tone blip
     gm = GaussianMixture(3, covariance_type="diag")
-    gm.fit(freqm2)
-    labels = gm.predict(freqm2)
+    gm.fit(freqm)
+    labels = gm.predict(freqm)
 
     # Find the GMM indices corresponding to the clusters that we want.  Silence
     # will be most common, and deviants least common.
