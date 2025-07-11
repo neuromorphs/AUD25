@@ -1,6 +1,8 @@
 import csv
 import glob
 import os
+from collections import Counter
+from itertools import groupby
 from typing import Any, List, Tuple
 
 import matplotlib.pyplot as plt
@@ -8,7 +10,7 @@ import mne
 import numpy as np
 
 from absl import app, flags
-from numpy.typing import NDArray
+from numpy.typing import ArrayLike, NDArray
 from scipy.signal import (
     butter,
     correlate,
@@ -24,18 +26,51 @@ from sklearn.decomposition import FastICA
 from sklearn.mixture import GaussianMixture
 
 
+def create_oddball_sequence(
+    fs=25000,  # Sampling frequency (Hz)
+    duration=0.05,  # Tone duration (seconds)
+    gap_duration=0.5,  # Time between tones (seconds)
+    standard_freq=720,  # Frequency of standard tone (Hz)
+    oddball_freq=1188,  # Frequency of oddball tone (Hz)
+    n_trials=700,  # Total number of trials
+    oddball_prob=0.2,  # Probability of oddball tone
+) -> Tuple[NDArray, NDArray]:
+    # Generate tones
+    t = np.arange(0, duration, 1 / fs)  # Time vector
+    standard_tone = np.sin(2 * np.pi * standard_freq * t)  # Standard tone
+    oddball_tone = np.sin(2 * np.pi * oddball_freq * t)  # Oddball tone
+
+    # Normalize tones
+    standard_tone = standard_tone / np.max(np.abs(standard_tone))
+    oddball_tone = oddball_tone / max(abs(oddball_tone))
+
+    # Add silence after each tone
+    silence = np.zeros(int(gap_duration * fs))
+    standard_tone = np.concatenate([standard_tone, silence])
+    oddball_tone = np.concatenate([oddball_tone, silence])
+
+    # Generate trial sequence,  1 for oddball, 0 for standard
+    trial_sequence = np.random.rand(n_trials) < oddball_prob
+    audio = np.concatenate(
+        [oddball_tone if trial else standard_tone for trial in trial_sequence]
+    )
+
+    return audio, trial_sequence
+
+
 def read_bv_raw_data(
-    data_dir: str, header_file: str):  # Can't figure out the right type...
+    data_dir: str, header_file: str
+):  # Can't figure out the right type...
     if not header_file:
-        files = glob.glob(os.path.join(data_dir, '*.vhdr'))
+        files = glob.glob(os.path.join(data_dir, "*.vhdr"))
         if len(files) == 0:
             raise ValueError(f"No .vhdr files found in {data_dir}")
         elif len(files) > 1:
             raise ValueError(f"Multiple .vhdr files found in {data_dir}")
         else:
-            if not data_dir.endswith('/'):
-                data_dir += '/'
-            header_file = files[0].replace(data_dir, '')
+            if not data_dir.endswith("/"):
+                data_dir += "/"
+            header_file = files[0].replace(data_dir, "")
     # Specify the path to your BrainVision header file
     vhdr_file = os.path.join(data_dir, header_file)
 
@@ -63,8 +98,7 @@ def extract_waveforms(
     )  # Getting the sampling rate from the raw object
 
     eeg_data = eeg_data[:31, :]  # Remove the audio channel
-    eeg_data = np.concatenate((eeg_data, np.zeros((1, eeg_data.shape[1]))),
-                              axis=0)
+    eeg_data = np.concatenate((eeg_data, np.zeros((1, eeg_data.shape[1]))), axis=0)
     raw.ch_names[31] = "Cz"
 
     audio_waveform = full_audio_waveform[:, : 30 * sampling_rate]
@@ -162,25 +196,6 @@ def get_event_locs(
     return standard_locs, deviant_locs
 
 
-def find_current_segment(present: NDArray, loc: int, skip_ahead: int = 100) -> NDArray:
-    """Given a Boolean truth array and the location of a true value, find the
-    start and ending locations of the true segment.
-
-    skip_ahead is a small integer saying how many samples to skip ahead, in case
-    the initial location is a bit too early.
-    """
-    present = np.asarray(present)
-    cur_loc = loc + skip_ahead
-    assert present[cur_loc]
-    assert cur_loc > 0
-    assert cur_loc < present.shape[0]
-    start_results = np.where(present[cur_loc::-1] == 0)
-    start_loc = cur_loc - start_results[0][0]
-    end_results = np.where(present[cur_loc::] == 0)
-    end_loc = cur_loc + end_results[0][0]
-    return int(start_loc), int(end_loc)
-
-
 def label_tone_blips(freqm: NDArray) -> NDArray:
     """Label each sample of the audio waveform whether it is 0 (no sound),
     standard tone (1) or deviant tone (2).  The standard is found over the deviant
@@ -202,68 +217,78 @@ def label_tone_blips(freqm: NDArray) -> NDArray:
     zero_label = int(np.argmax(counts))
     deviant_label = int(np.argmin(counts))
     standard_label = set(range(3)).difference({zero_label, deviant_label}).pop()
-
     results = np.zeros(freqm.shape[0], int)
     results[labels == standard_label] = 1
     results[labels == deviant_label] = 2
     return results
 
 
-def find_tone_examples(
-    audio_waveform: NDArray,
-    debug_plots: bool = True,
-) -> Tuple[NDArray, NDArray]:
+def find_most_common(my_list: List[int]) -> int:
+    # Create a Counter object from the list
+    element_counts = Counter(my_list)
+
+    # Use most_common(1) to get the single most common element and its count
+    # This returns a list of tuples, so we access the first element of the list
+    # and then the first element of the tuple to get just the element itself.
+    most_common_element = element_counts.most_common(1)[0][0]
+    return most_common_element
+
+
+def find_desired_segment(
+    boolean_list: List[bool], n: int, values: ArrayLike, desired_label: int
+):
+    """
+    Finds segments of consecutive True values in a boolean list
+    that are at least N elements wide using itertools.groupby.
+
+    Args:
+      boolean_list: A list of boolean values.
+      n: The minimum length of the segment.
+
+    Returns:
+      A list of tuples, where each tuple represents a segment
+      and contains (start_index, end_index).
+    """
+    segments = []
+    current_index = 0
+
+    for value, group in groupby(boolean_list):
+        group_list = list(group)
+        group_length = len(group_list)
+        if value and group_length >= n:
+            label = find_most_common(
+                values[current_index : current_index + group_length]
+            )
+            if label == desired_label:
+                return (current_index, current_index + group_length - 1)
+        current_index += group_length
+
+    return None
+
+
+def find_tone_examples(audio_waveform: NDArray) -> Tuple[NDArray, NDArray]:
     """Given an audio waveform, find the prototypical
     standard and deviant tone arrays.
     """
-    freq = teeger(audio_waveform[0, :])
+    freq = teeger(audio_waveform[0, :])  # Figure out freq (and amplitude)
+    freqm = medfilt(freq, 7)  # Smooth freqs to remove glitches
+    freqm = medfilt(freq, 7)  # Smooth freqs to remove glitches
     freqm = medfilt(freq, 7)  # Smooth freqs to remove glitches
 
-    labels = label_tone_blips(freqm)
+    labels = label_tone_blips(freqm)  # Figure our which blips are which
     standard_label = 1
     deviant_label = 2
 
-    # Smoth these labels because we often see glitches (because the Teeger
-    # operator is sensitive to transitions.)
-    smooth_labels = medfilt(labels, 7)
-    first_standard_loc = np.where(smooth_labels == standard_label)[0][0]
-    first_deviant_loc = np.where(smooth_labels == deviant_label)[0][0]
+    standard_segment = find_desired_segment(labels > 0, 500, labels, standard_label)
+    if standard_segment is None:
+        raise ValueError("Standard segment not found")
 
-    # Figure out where the tones are present, using the Hilbert transform to
-    # find the envelope
-    waveform_envelope = np.abs(hilbert(audio_waveform[0, :]))
-    tone_present = medfilt(
-        (waveform_envelope > np.max(waveform_envelope) / 2).astype(int), 7
-    )
+    deviant_segment = find_desired_segment(labels > 0, 500, labels, deviant_label)
+    if not deviant_segment:
+        raise ValueError("Deviant segment not found")
 
-    if debug_plots:
-        plt.subplot(2, 1, 1)
-        plt.plot(labels, label="GMM Labels")
-        plt.plot(tone_present, label="Tone Present")
-        plt.plot(waveform_envelope, label="Envelope")
-        plt.axvline(first_standard_loc, color="r")
-        plt.axvline(first_deviant_loc, color="g")
-        plt.xlim([first_standard_loc - 1000, first_standard_loc + 1000])
-        plt.ylabel("Standard")
-        plt.legend()
-        plt.title('Finding Standard and Deviant Tone Examples')
-
-        plt.subplot(2, 1, 2)
-        plt.plot(labels, label="GMM Labels")
-        plt.plot(tone_present, label="Tone Present")
-        plt.plot(waveform_envelope, label="Envelope")
-        plt.axvline(first_standard_loc, color="r")
-        plt.axvline(first_deviant_loc, color="k")
-        plt.xlim([first_deviant_loc - 1000, first_deviant_loc + 1000])
-        plt.ylabel("Deviant")
-        plt.legend()
-
-    # OK, now we know where the two tones start, find their complete extant.
-    standard_locs = find_current_segment(tone_present, first_standard_loc)
-    deviant_locs = find_current_segment(tone_present, first_deviant_loc)
-
-    standard_tone = audio_waveform[0, standard_locs[0] : standard_locs[1]]
-    deviant_tone = audio_waveform[0, deviant_locs[0] : deviant_locs[1]]
+    standard_tone = audio_waveform[0, standard_segment[0] : standard_segment[1]]
+    deviant_tone = audio_waveform[0, deviant_segment[0] : deviant_segment[1]]
 
     return standard_tone, deviant_tone
 
@@ -344,7 +369,7 @@ def model_with_ica(
     for i in range(components.shape[1]):
         plt.text(0, 5 * i, f"IC #{i}")
         plt.xlabel("Time (s)")
-    plt.title('ICA Components')
+    plt.title("ICA Components")
     return ica, components
 
 
@@ -354,7 +379,7 @@ def filter_ica_channels(
     bad_channels: List[int] = [2, 5, 6],
 ) -> NDArray:
     ica_components2 = ica_components.copy()  # Num_times x num_factors
-    print('Removing ICA channels: ', bad_channels)
+    print("Removing ICA channels: ", bad_channels)
     for i in bad_channels:
         ica_components2[:, i] = 0
 
@@ -409,31 +434,36 @@ def downsample_eeg(eeg_data: NDArray, sampling_rate: float, factor: int) -> NDAr
 
 
 def plot_audio_waveforms(
-    standard_average_sound: NDArray,
-    deviant_average_sound: NDArray,
+    standard_sound: NDArray,
+    deviant_sound: NDArray,
     sampling_rate: float = 25000,
     pre_samples=0,
 ):
+    assert standard_sound.ndim == 2
+    assert deviant_sound.ndim == 2
+    assert standard_sound.shape[1] > standard_sound.shape[0], standard_sound.shape
+    assert deviant_sound.shape[1] > deviant_sound.shape[0], deviant_sound.shape
+
     plt.clf()
     num_samples = int(0.100 * sampling_rate)  # To plot
     plt.subplot(2, 1, 1)
     plt.plot(
-        np.arange(num_samples) / sampling_rate * 1000,
-        standard_average_sound[0, :num_samples],
+        np.arange(min(num_samples, standard_sound.shape[1])) / sampling_rate * 1000,
+        standard_sound[0, :num_samples],
     )
     plt.ylabel("Standard")
     plt.axvline(pre_samples / sampling_rate * 1000, c="r")
-    plt.title('Comparing Arverage Recorded Sounds for '
-              'Standard and Deviant Tones')
+    plt.title("Comparing Arverage Recorded Sounds for " "Standard and Deviant Tones")
     plt.subplot(2, 1, 2)
     plt.plot(
-        np.arange(num_samples) / sampling_rate * 1000,
-        deviant_average_sound[0, :num_samples],
+        np.arange(min(num_samples, deviant_sound.shape[1])) / sampling_rate * 1000,
+        deviant_sound[0, :num_samples],
     )
     plt.ylabel("Deviant")
     plt.xlabel("Time (ms)")
     plt.axvline(pre_samples / sampling_rate * 1000, c="r")
     # We should see two clear sinusoids at different frequencies.
+
 
 def plot_erp_images(
     normal_erp: NDArray,
@@ -450,7 +480,7 @@ def plot_erp_images(
     plt.axis("auto")
     plt.ylabel("Standard")
     plt.colorbar()
-    plt.title('Comparing ERPs for Standard and Deviant Tones')
+    plt.title("Comparing ERPs for Standard and Deviant Tones")
     plt.subplot(2, 1, 2)
     plt.imshow(deviant_erp, extent=extent)
     plt.ylabel("Deviant")
@@ -458,49 +488,60 @@ def plot_erp_images(
     plt.xlabel("Time (ms)")
     plt.colorbar()
 
-def plot_all_erp_channels(normal_erp, deviant_erp, channels,
-                          pre_samples: int = 0, sampling_rate: float = 25000):
-  plt.clf()
-  time_scale = (np.arange(normal_erp.shape[1]) - pre_samples)/sampling_rate*1000
 
-  max = np.maximum(np.max(np.abs(normal_erp[channels, :])),
-                   np.max(np.abs(deviant_erp[channels, :])))
-  plt.subplot(2, 1, 1)
-  plt.plot(time_scale, normal_erp[channels, :].T)
-  plt.ylabel('Standard Tone')
-  plt.ylim([-max, max])
-  plt.title('Comparing ERPs for Standard and Deviant Tones')
-  # plt.xlabel('Time (ms)');
+def plot_all_erp_channels(
+    normal_erp,
+    deviant_erp,
+    channels,
+    pre_samples: int = 0,
+    sampling_rate: float = 25000,
+):
+    plt.clf()
+    time_scale = (np.arange(normal_erp.shape[1]) - pre_samples) / sampling_rate * 1000
 
-  plt.subplot(2, 1, 2)
-  plt.plot(time_scale, deviant_erp[channels, :].T)
-  plt.ylabel('Deviant Tone Results')
-  plt.ylim([-max, max])
-  plt.xlabel('Time (ms)');
+    max = np.maximum(
+        np.max(np.abs(normal_erp[channels, :])),
+        np.max(np.abs(deviant_erp[channels, :])),
+    )
+    plt.subplot(2, 1, 1)
+    plt.plot(time_scale, normal_erp[channels, :].T)
+    plt.ylabel("Standard Tone")
+    plt.ylim([-max, max])
+    plt.title("Comparing ERPs for Standard and Deviant Tones")
+    # plt.xlabel('Time (ms)');
+
+    plt.subplot(2, 1, 2)
+    plt.plot(time_scale, deviant_erp[channels, :].T)
+    plt.ylabel("Deviant Tone Results")
+    plt.ylim([-max, max])
+    plt.xlabel("Time (ms)")
 
 
-def plot_all_erp_diff(normal_erp, deviant_erp, channels: List[int],
-                          pre_samples: int = 0, sampling_rate: float = 25000,
-                          bad_channels: List[int] = []):
-  time_scale = (np.arange(normal_erp.shape[1]) - pre_samples)/sampling_rate*1000
+def plot_all_erp_diff(
+    normal_erp,
+    deviant_erp,
+    channels: List[int],
+    pre_samples: int = 0,
+    sampling_rate: float = 25000,
+    bad_channels: List[int] = [],
+):
+    time_scale = (np.arange(normal_erp.shape[1]) - pre_samples) / sampling_rate * 1000
 
-  normal_average = np.mean(normal_erp[channels, :], axis=0)
-  deviant_average = np.mean(deviant_erp[channels, :], axis=0)
-  plt.clf()
-  plt.plot(time_scale, normal_average,
-          label='Standard')
-  plt.plot(time_scale, deviant_average,
-          label='Deviant')
-  plt.plot(time_scale, deviant_average - normal_average,
-          label='Difference')
-  plt.xlabel('Time (ms)')
-  plt.ylabel(r'$\mu$V')
-  plt.title(f'Average ERPs for Channels {channels} - Removing ICA #{bad_channels}')
-  plt.legend()
+    normal_average = np.mean(normal_erp[channels, :], axis=0)
+    deviant_average = np.mean(deviant_erp[channels, :], axis=0)
+    plt.clf()
+    plt.plot(time_scale, normal_average, label="Standard")
+    plt.plot(time_scale, deviant_average, label="Deviant")
+    plt.plot(time_scale, deviant_average - normal_average, label="Difference")
+    plt.xlabel("Time (ms)")
+    plt.ylabel(r"$\mu$V")
+    plt.title(f"Average ERPs for Channels {channels} - Removing ICA #{bad_channels}")
+    plt.legend()
 
 
 def summarize_erp_diff(normal_erp, deviant_erp, channels: List[int]):
     """Summarize the difference between the standard and deviant ERPs."""
+
     def rms(x):
         return np.sqrt(np.mean(x * x))
 
@@ -514,23 +555,18 @@ FLAGS = flags.FLAGS
 
 flags.DEFINE_string("data_dir", "/tmp", "Directory where the raw EEG BV dat is stored.")
 flags.DEFINE_string(
-    "header_file", "",
-    "Which header file (and its associated files) to read."
+    "header_file", "", "Which header file (and its associated files) to read."
 )
 
-flags.DEFINE_integer("lowcut", 1,
-                     "Frequency for low-side of EEG bandpass filter")
-flags.DEFINE_integer("highcut", 15,
-                     "Frequency for high-side of EEG bandpass filter")
-flags.DEFINE_string("plot_dir", "plots",
-                    "Where to store debugging plots")
-flags.DEFINE_multi_integer("bad_channels", [],
-                           "List of bad channels to remove.")
+flags.DEFINE_integer("lowcut", 1, "Frequency for low-side of EEG bandpass filter")
+flags.DEFINE_integer("highcut", 15, "Frequency for high-side of EEG bandpass filter")
+flags.DEFINE_string("plot_dir", "plots", "Where to store debugging plots")
+flags.DEFINE_multi_integer("bad_channels", [], "List of bad channels to remove.")
 
 
 def save_fig(fig: plt.Figure, plot_dir: str, name: str) -> None:
     """Save a matplotlib figure to a file."""
-    print('Writing data to', os.path.join(plot_dir, name))
+    print("Writing data to", os.path.join(plot_dir, name))
     if not os.path.exists(plot_dir):
         os.makedirs(plot_dir)
     fig.savefig(os.path.join(plot_dir, name))
@@ -539,30 +575,28 @@ def save_fig(fig: plt.Figure, plot_dir: str, name: str) -> None:
 def main(*argv):
     raw = read_bv_raw_data(FLAGS.data_dir, FLAGS.header_file)
 
-    (audio_waveform, full_audio_waveform,
-     eeg_data, sampling_rate) = extract_waveforms(raw)
+    (audio_waveform, full_audio_waveform, eeg_data, sampling_rate) = extract_waveforms(
+        raw
+    )
 
-    standard_tone, deviant_tone = find_tone_examples(audio_waveform,
-                                                     debug_plots=True)
-    save_fig(plt.gcf(), FLAGS.plot_dir, "Tone_examples.png")
+    standard_tone, deviant_tone = find_tone_examples(
+        audio_waveform, plot_filename="Tone_examples.png"
+    )
 
     standard_locs, deviant_locs = get_event_locs(
-        FLAGS.data_dir, full_audio_waveform, standard_tone, deviant_tone,
-        sampling_rate
+        FLAGS.data_dir, full_audio_waveform, standard_tone, deviant_tone, sampling_rate
     )
 
     rereferenced_eeg = rereference_eeg(eeg_data, ["Cz"])
 
     filtered_eeg = filter_eeg(
-        rereferenced_eeg, FLAGS.lowcut, FLAGS.highcut,
-        sampling_rate, axis=1, order=6
+        rereferenced_eeg, FLAGS.lowcut, FLAGS.highcut, sampling_rate, axis=1, order=6
     )
 
     ica, ica_components = model_with_ica(filtered_eeg.T, sampling_rate)
     save_fig(plt.gcf(), FLAGS.plot_dir, "ICA_components.png")
 
-    cleaned_eeg = filter_ica_channels(ica, ica_components,
-                                      FLAGS.bad_channels).T
+    cleaned_eeg = filter_ica_channels(ica, ica_components, FLAGS.bad_channels).T
 
     # Let's first make sure we get the right answer if we use the ERP o
     # function to process the audio waveforms.
@@ -575,8 +609,7 @@ def main(*argv):
         full_audio_waveform, deviant_locs, pre_samples=pre_samples
     )
     plot_audio_waveforms(
-        standard_average_sound, deviant_average_sound,
-        sampling_rate, pre_samples
+        standard_average_sound, deviant_average_sound, sampling_rate, pre_samples
     )
     save_fig(plt.gcf(), FLAGS.plot_dir, "ERP_audio_waveforms.png")
 
@@ -598,23 +631,31 @@ def main(*argv):
     plot_erp_images(normal_erp, deviant_erp, pre_samples, sampling_rate)
     save_fig(plt.gcf(), FLAGS.plot_dir, "ERP_images.png")
 
-    plot_all_erp_channels(normal_erp, deviant_erp, list(range(32)),
-                          pre_samples=pre_samples,
-                          sampling_rate=sampling_rate)
+    plot_all_erp_channels(
+        normal_erp,
+        deviant_erp,
+        list(range(32)),
+        pre_samples=pre_samples,
+        sampling_rate=sampling_rate,
+    )
     save_fig(plt.gcf(), FLAGS.plot_dir, "ERP_all_channels.png")
 
-    plot_all_erp_diff(normal_erp, deviant_erp, [31],
-                      pre_samples=pre_samples,
-                      bad_channels=FLAGS.bad_channels)
+    plot_all_erp_diff(
+        normal_erp,
+        deviant_erp,
+        [31],
+        pre_samples=pre_samples,
+        bad_channels=FLAGS.bad_channels,
+    )
     save_fig(plt.gcf(), FLAGS.plot_dir, "ERP_channel_dif.png")
 
-    normal_rms, deviant_rms, diff_rms = summarize_erp_diff(normal_erp,
-                                                           deviant_erp,
-                                                           FLAGS.bad_channels)
+    normal_rms, deviant_rms, diff_rms = summarize_erp_diff(
+        normal_erp, deviant_erp, FLAGS.bad_channels
+    )
     print(f"Standard RMS: {normal_rms:.3f} uV")
     print(f"Deviant RMS: {deviant_rms:.3f} uV")
     print(f"Diff RMS: {diff_rms:.3f} uV")
-    print(f'Diff to Standard: {diff_rms / normal_rms * 100:.2f}%')
+    print(f"Diff to Standard: {diff_rms / normal_rms * 100:.2f}%")
 
 
 if __name__ == "__main__":
