@@ -1,4 +1,5 @@
 import csv
+import glob
 import os
 from typing import Any, List, Tuple
 
@@ -25,6 +26,16 @@ from sklearn.mixture import GaussianMixture
 
 def read_bv_raw_data(
     data_dir: str, header_file: str):  # Can't figure out the right type...
+    if not header_file:
+        files = glob.glob(os.path.join(data_dir, '*.vhdr'))
+        if len(files) == 0:
+            raise ValueError(f"No .vhdr files found in {data_dir}")
+        elif len(files) > 1:
+            raise ValueError(f"Multiple .vhdr files found in {data_dir}")
+        else:
+            if not data_dir.endswith('/'):
+                data_dir += '/'
+            header_file = files[0].replace(data_dir, '')
     # Specify the path to your BrainVision header file
     vhdr_file = os.path.join(data_dir, header_file)
 
@@ -492,7 +503,7 @@ FLAGS = flags.FLAGS
 
 flags.DEFINE_string("data_dir", "/tmp", "Directory where the raw EEG BV dat is stored.")
 flags.DEFINE_string(
-    "header_file", "/tmp",
+    "header_file", "",
     "Which header file (and its associated files) to read."
 )
 
