@@ -8,6 +8,7 @@ from typing import Any, List, Tuple
 import matplotlib.pyplot as plt
 import mne
 import numpy as np
+import scipy.io.wavfile as wavfile
 
 from absl import app, flags
 from numpy.typing import ArrayLike, NDArray
@@ -54,6 +55,8 @@ def create_oddball_sequence(
     audio = np.concatenate(
         [oddball_tone if trial else standard_tone for trial in trial_sequence]
     )
+    # Add silence at the start
+    audio = np.concatenate([silence, silence, silence, silence, audio])
 
     return audio, trial_sequence
 
@@ -149,6 +152,7 @@ def rereference_eeg(
 
 
 def tone_times_from_csv(csv_file_path: str) -> Tuple[List[float], List[float]]:
+    # Obsolete, since we can read the events times from the BV file.
     standard_tone_times = []
     deviant_tone_times = []
 
@@ -175,6 +179,11 @@ def tone_times_from_csv(csv_file_path: str) -> Tuple[List[float], List[float]]:
 def get_event_locs(
     data_dir, full_audio_waveform, standard_tone, deviant_tone, sampling_rate
 ) -> Tuple[List[float], List[float]]:
+    """Find the start of each tone in the audio waveform using cross correlation.
+    Return two lists, one giving the starting location of each standard tone, and
+    the other giving the starting location of each deviant tone.  The locations are
+    in seconds.
+    """
     trigger_filename = os.path.join(data_dir, "triggers.csv")
     if os.path.exists(trigger_filename):
         print("Reading triggers.csv")
@@ -196,6 +205,43 @@ def get_event_locs(
     return standard_locs, deviant_locs
 
 
+def read_bv_events(
+    raw, tone_length_s: float = 0.05
+) -> Tuple[List[float], List[float], List[float]]:
+    """Read the BV Event data and return list of standard and deviant
+    event times.  All times are in seconds.
+
+    Returns a list of events that tell the start time (in seconds) of the
+    standard and deviant tones.  And a third list of latencies between the
+    label event (by serial port) and the StimTrac sound threshold event.
+    """
+    events, event_id = mne.events_from_annotations(raw)
+    sampling_rate = float(raw.info["sfreq"])
+    standards = []
+    deviants = []
+    latencies = []
+    stimtrac_id = event_id["Trigger/T  1"]
+    standard_id = event_id["Stimulus/S  1"]
+    deviant_id = event_id["Stimulus/S  2"]
+    next_event_is_standard = True
+    id_event_time = 0
+    for event in events:
+        event_time = event[0] / sampling_rate
+        if event[2] == stimtrac_id:
+            if next_event_is_standard:
+                standards.append(float(event_time))
+            else:
+                deviants.append(float(event_time))
+            latencies.append((event[0] - id_event_time) / sampling_rate)
+        if event[2] == standard_id:
+            next_event_is_standard = True
+            id_event_time = event[0]
+        elif event[2] == deviant_id:
+            next_event_is_standard = False
+            id_event_time = event[0]
+    return standards, deviants, latencies
+
+
 def label_tone_blips(freqm: NDArray) -> NDArray:
     """Label each sample of the audio waveform whether it is 0 (no sound),
     standard tone (1) or deviant tone (2).  The standard is found over the deviant
@@ -209,11 +255,13 @@ def label_tone_blips(freqm: NDArray) -> NDArray:
     # Fit the Teeger results with 3 clusters so we can identify each tone blip
     gm = GaussianMixture(3, covariance_type="diag")
     gm.fit(freqm)
+    print("Label_tone_blips means are:", gm.means_)
     labels = gm.predict(freqm)
 
     # Find the GMM indices corresponding to the clusters that we want.  Silence
     # will be most common, and deviants least common.
     _, counts = np.unique(labels, return_counts=True)
+    print("Label_tone_blips: Counts of the 3 clusters: ", counts)
     zero_label = int(np.argmax(counts))
     deviant_label = int(np.argmin(counts))
     standard_label = set(range(3)).difference({zero_label, deviant_label}).pop()
@@ -249,9 +297,7 @@ def find_desired_segment(
       A list of tuples, where each tuple represents a segment
       and contains (start_index, end_index).
     """
-    segments = []
     current_index = 0
-
     for value, group in groupby(boolean_list):
         group_list = list(group)
         group_length = len(group_list)
@@ -391,7 +437,7 @@ def accumulate_erp(
     eeg_data: NDArray,
     locs: NDArray,  # In seconds
     sampling_rate: float = 25000,
-    num_samples: int = 12500,
+    num_samples: int = 0,
     pre_samples: int = 0,
     remove_baseline: bool = False,
 ) -> NDArray:
@@ -403,6 +449,8 @@ def accumulate_erp(
     assert (
         num_times > num_channels
     ), f"num_times {num_times} is not > num_channels {num_channels}"
+    if not num_samples:
+        num_samples = int(0.5 * sampling_rate)  # 0.5s
     erp = 0
     count = 0
     for loc in locs:
@@ -562,6 +610,7 @@ flags.DEFINE_integer("lowcut", 1, "Frequency for low-side of EEG bandpass filter
 flags.DEFINE_integer("highcut", 15, "Frequency for high-side of EEG bandpass filter")
 flags.DEFINE_string("plot_dir", "plots", "Where to store debugging plots")
 flags.DEFINE_multi_integer("bad_channels", [], "List of bad channels to remove.")
+flags.DEFINE_string("save_audio_file", "", "Where to save the BV recorded audio file")
 
 
 def save_fig(fig: plt.Figure, plot_dir: str, name: str) -> None:
@@ -578,14 +627,42 @@ def main(*argv):
     (audio_waveform, full_audio_waveform, eeg_data, sampling_rate) = extract_waveforms(
         raw
     )
-
-    standard_tone, deviant_tone = find_tone_examples(
-        audio_waveform, plot_filename="Tone_examples.png"
+    print(
+        "Found audio waveform of length ",
+        full_audio_waveform.shape[1] / sampling_rate,
+        " seconds",
     )
+    print("Audio sampling rate: ", sampling_rate)
 
-    standard_locs, deviant_locs = get_event_locs(
-        FLAGS.data_dir, full_audio_waveform, standard_tone, deviant_tone, sampling_rate
-    )
+    if FLAGS.save_audio_file:
+        wavfile.write(
+            FLAGS.save_audio_file,
+            sampling_rate,
+            (audio_waveform / np.max(np.abs(audio_waveform)) * 32768).astype(np.int16),
+        )
+
+    use_bv_event_timing = sampling_rate <= 8000
+
+    if use_bv_event_timing:
+        print("Using BV event timing.")
+        standard_locs, deviant_locs, _ = read_bv_events(raw)
+        standard_tone = None
+        deviant_tone = None
+    else:
+        print("Calculating event timing from StimTrac audio.")
+        standard_tone, deviant_tone = find_tone_examples(audio_waveform)
+        plot_audio_waveforms(
+            standard_tone.reshape(1, -1), deviant_tone.reshape(1, -1), sampling_rate
+        )
+        save_fig(plt.gcf(), FLAGS.plot_dir, "tones_found.png")
+
+        standard_locs, deviant_locs = get_event_locs(
+            FLAGS.data_dir,
+            full_audio_waveform,
+            standard_tone,
+            deviant_tone,
+            sampling_rate,
+        )
 
     rereferenced_eeg = rereference_eeg(eeg_data, ["Cz"])
 
@@ -598,20 +675,21 @@ def main(*argv):
 
     cleaned_eeg = filter_ica_channels(ica, ica_components, FLAGS.bad_channels).T
 
-    # Let's first make sure we get the right answer if we use the ERP o
-    # function to process the audio waveforms.
-
     pre_samples = int(0.05 * sampling_rate)
-    standard_average_sound = accumulate_erp(
-        full_audio_waveform, standard_locs, pre_samples=pre_samples
-    )
-    deviant_average_sound = accumulate_erp(
-        full_audio_waveform, deviant_locs, pre_samples=pre_samples
-    )
-    plot_audio_waveforms(
-        standard_average_sound, deviant_average_sound, sampling_rate, pre_samples
-    )
-    save_fig(plt.gcf(), FLAGS.plot_dir, "ERP_audio_waveforms.png")
+    if not use_bv_event_timing:
+        # Let's first make sure we get the right answer if we use the ERP
+        # function to process the audio waveforms.
+
+        standard_average_sound = accumulate_erp(
+            full_audio_waveform, standard_locs, pre_samples=pre_samples
+        )
+        deviant_average_sound = accumulate_erp(
+            full_audio_waveform, deviant_locs, pre_samples=pre_samples
+        )
+        plot_audio_waveforms(
+            standard_average_sound, deviant_average_sound, sampling_rate, pre_samples
+        )
+        save_fig(plt.gcf(), FLAGS.plot_dir, "ERP_audio_waveforms.png")
 
     # Now we can calculate the ERP for the EEG data.
     normal_erp = accumulate_erp(
@@ -650,11 +728,11 @@ def main(*argv):
     save_fig(plt.gcf(), FLAGS.plot_dir, "ERP_channel_dif.png")
 
     normal_rms, deviant_rms, diff_rms = summarize_erp_diff(
-        normal_erp, deviant_erp, FLAGS.bad_channels
+        normal_erp, deviant_erp, [31]  # Just Cz
     )
-    print(f"Standard RMS: {normal_rms:.3f} uV")
-    print(f"Deviant RMS: {deviant_rms:.3f} uV")
-    print(f"Diff RMS: {diff_rms:.3f} uV")
+    print(f"Standard RMS: {normal_rms:3g} uV")
+    print(f"Deviant RMS: {deviant_rms:.3g} uV")
+    print(f"Diff RMS: {diff_rms:.3g} uV")
     print(f"Diff to Standard: {diff_rms / normal_rms * 100:.2f}%")
 
 
