@@ -137,33 +137,32 @@ def teeger(x: NDArray) -> NDArray:
 
 
 def rereference_eeg(
-    eeg_data: NDArray, reference_channels: List[str] = ["Cz"]
+    eeg_data: NDArray, reference_channels: Union[str, List[int]] = "Average"
 ) -> NDArray:
     """Re-reference the EEG data, which is supplied in shape
     num_channels x num_times
     """
     assert eeg_data.ndim == 2
-    assert eeg_data.shape[1] > eeg_data.shape[0]
-    if reference_channels == ["Cz"]:
+    assert eeg_data.shape[1] > eeg_data.shape[0]  # More time samples than channels
+    if reference_channels == "Average":
+        print("Rereferencing data to the average of all channels")
+        reference = np.mean(eeg_data, axis=0, keepdims=True)
+        rereferenced_eeg = eeg_data - reference
+    elif reference_channels == ["XXXCz"]:
         print("Rereferencing data to Cz")
         # Restore the missing Cz channel
         rereferenced_eeg = np.concatenate(
             (eeg_data, np.zeros((1, eeg_data.shape[1]))), axis=0
         )
         rereferenced_eeg[31, :] = np.mean(rereferenced_eeg[:31, :], axis=0)
-
     elif len(reference_channels):
         print("Rereferencing data to the mean of the listed channels")
         # Compute mean of the reference channels
         reference = np.mean(eeg_data[reference_channels, :], axis=0, keepdims=True)
         rereferenced_eeg = eeg_data - reference
     else:
-        print("Rereferencing data to the mean of *all* the channels")
-        # Compute the mean of *all* the channels
-        reference = np.mean(eeg_data, axis=0, keepdims=True)
-        rereferenced_eeg = eeg_data - reference
+        raise ValueError(f"Unknown reference_channels: {reference_channels}")
 
-    print("Re-referenced eeg data has shape", rereferenced_eeg.shape)
     return rereferenced_eeg
 
 
@@ -693,7 +692,7 @@ def main(*argv):
             sampling_rate,
         )
 
-    rereferenced_eeg = rereference_eeg(eeg_data, ["Cz"])
+    rereferenced_eeg = rereference_eeg(eeg_data, "Average")
 
     filtered_eeg = filter_eeg(
         rereferenced_eeg, FLAGS.lowcut, FLAGS.highcut, sampling_rate, axis=1, order=6
