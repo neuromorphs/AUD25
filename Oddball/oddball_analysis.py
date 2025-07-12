@@ -1,6 +1,8 @@
 import csv
 import glob
 import os
+from re import I
+import sys
 from collections import Counter
 from itertools import groupby
 from typing import Any, List, Tuple, Union
@@ -60,6 +62,7 @@ def create_oddball_sequence(
 
     return audio, trial_sequence
 
+#######################  Read Experimental Data  ############################
 
 def read_bv_raw_data(
     data_dir: str, header_file: str
@@ -194,10 +197,10 @@ def tone_times_from_csv(csv_file_path: str) -> Tuple[List[float], List[float]]:
 def get_event_locs(
     data_dir, full_audio_waveform, standard_tone, deviant_tone, sampling_rate
 ) -> Tuple[List[float], List[float]]:
-    """Find the start of each tone in the audio waveform using cross correlation.
-    Return two lists, one giving the starting location of each standard tone, and
-    the other giving the starting location of each deviant tone.  The locations are
-    in seconds.
+    """Find the start of each tone in the audio waveform using cross
+    correlation.  Return two lists, one giving the starting location of each
+    standard tone, and the other giving the starting location of each deviant
+    tone.  The locations are in seconds.
     """
     trigger_filename = os.path.join(data_dir, "triggers.csv")
     if os.path.exists(trigger_filename):
@@ -222,8 +225,10 @@ def get_event_locs(
 
 def read_cgx_events(raw) -> Tuple[List[float], List[float]]:
     trigger = raw.get_data("TRIGGER")[0, :]
-    standard_locs = np.where(np.logical_and(trigger[1:] == 1, trigger[:-1] == 0))[0]
-    deviant_locs = np.where(np.logical_and(trigger[1:] == 2, trigger[:-1] == 0))[0]
+    standard_locs = np.where(np.logical_and(trigger[1:] == 1,
+                                            trigger[:-1] == 0))[0]
+    deviant_locs = np.where(np.logical_and(trigger[1:] == 2,
+                                           trigger[:-1] == 0))[0]
 
     assert len(standard_locs) >= len(deviant_locs)
     standard_locs = standard_locs / raw.info["sfreq"]
@@ -270,8 +275,8 @@ def read_bv_events(
 
 def label_tone_blips(freqm: NDArray) -> NDArray:
     """Label each sample of the audio waveform whether it is 0 (no sound),
-    standard tone (1) or deviant tone (2).  The standard is found over the deviant
-    because there are more standard tones.
+    standard tone (1) or deviant tone (2).  The standard is found over the
+    deviant because there are more standard tones.
     """
     if freqm.ndim == 1:
         freqm = freqm.reshape(-1, 1)
@@ -351,11 +356,13 @@ def find_tone_examples(audio_waveform: NDArray) -> Tuple[NDArray, NDArray]:
     standard_label = 1
     deviant_label = 2
 
-    standard_segment = find_desired_segment(labels > 0, 500, labels, standard_label)
+    standard_segment = find_desired_segment(labels > 0, 500, labels,
+                                            standard_label)
     if standard_segment is None:
         raise ValueError("Standard segment not found")
 
-    deviant_segment = find_desired_segment(labels > 0, 500, labels, deviant_label)
+    deviant_segment = find_desired_segment(labels > 0, 500, labels,
+                                           deviant_label)
     if not deviant_segment:
         raise ValueError("Deviant segment not found")
 
@@ -402,7 +409,8 @@ def filter_eeg(
 ) -> NDArray:
     # Example usage: Bandpass filter the eeg waveform .z
     sos = butter(
-        order, [lowcut_freq, highcut_freq], fs=sampling_rate, output="sos", btype="band"
+        order, [lowcut_freq, highcut_freq], fs=sampling_rate,
+        output="sos", btype="band"
     )
     if debug_spectrum:
         w, h = sosfreqz(sos, fs=sampling_rate, worN=2000)
@@ -428,7 +436,8 @@ def model_with_ica(
     ]
 
     components = np.concatenate(
-        [5 * i + ica_components[:, i : i + 1] for i in range(ica_components.shape[1])],
+        [5 * i + ica_components[:, i : i + 1] for i in
+         range(ica_components.shape[1])],
         axis=1,
     )
 
@@ -492,7 +501,8 @@ def accumulate_erp(
     return erp / count
 
 
-def downsample_eeg(eeg_data: NDArray, sampling_rate: float, factor: int) -> NDArray:
+def downsample_eeg(eeg_data: NDArray, sampling_rate: float,
+                   factor: int) -> NDArray:
     """Downsample the EEG data (num_channels x num_times) by an integer factor.
     Must do the anti-aliasing (low pass filter) before calling this routine.
     """
@@ -527,7 +537,8 @@ def plot_audio_waveforms(
     )
     plt.ylabel("Standard")
     plt.axvline(pre_samples / sampling_rate * 1000, c="r")
-    plt.title("Comparing Arverage Recorded Sounds for " "Standard and Deviant Tones")
+    plt.title("Comparing Arverage Recorded Sounds for "
+              "Standard and Deviant Tones")
     plt.subplot(2, 1, 2)
     plt.plot(
         np.arange(min(num_samples, deviant_sound.shape[1])) / sampling_rate * 1000,
@@ -546,7 +557,8 @@ def plot_erp_images(
     sampling_rate: float = 25000,
 ):
     plt.clf()
-    time_scale = (np.arange(normal_erp.shape[1]) - pre_samples) / sampling_rate * 1000
+    time_scale = (np.arange(normal_erp.shape[1]) -
+                  pre_samples) / sampling_rate * 1000
 
     extent = [np.min(time_scale), np.max(time_scale), 0, normal_erp.shape[0]]
     plt.subplot(2, 1, 1)
@@ -571,7 +583,8 @@ def plot_all_erp_channels(
     sampling_rate: float = 25000,
 ):
     plt.clf()
-    time_scale = (np.arange(normal_erp.shape[1]) - pre_samples) / sampling_rate * 1000
+    time_scale = (np.arange(normal_erp.shape[1]) -
+                  pre_samples) / sampling_rate * 1000
 
     max = np.maximum(
         np.max(np.abs(normal_erp[channels, :])),
@@ -599,7 +612,8 @@ def plot_all_erp_diff(
     sampling_rate: float = 25000,
     bad_channels: List[int] = [],
 ):
-    time_scale = (np.arange(normal_erp.shape[1]) - pre_samples) / sampling_rate * 1000
+    time_scale = (np.arange(normal_erp.shape[1]) -
+                  pre_samples) / sampling_rate * 1000
 
     normal_average = np.mean(normal_erp[channels, :], axis=0)
     deviant_average = np.mean(deviant_erp[channels, :], axis=0)
@@ -609,7 +623,8 @@ def plot_all_erp_diff(
     plt.plot(time_scale, deviant_average - normal_average, label="Difference")
     plt.xlabel("Time (ms)")
     plt.ylabel(r"$\mu$V")
-    plt.title(f"Average ERPs for Channels {channels} - Removing ICA #{bad_channels}")
+    plt.title(f"Average ERPs for Channels {channels} - "
+              f"Removing ICA #{bad_channels}")
     plt.legend()
 
 
@@ -625,20 +640,6 @@ def summarize_erp_diff(normal_erp, deviant_erp, channels: List[int]):
     return rms(normal_average), rms(deviant_average), rms(diff)
 
 
-FLAGS = flags.FLAGS
-
-flags.DEFINE_string("data_dir", "/tmp", "Directory where the raw EEG BV dat is stored.")
-flags.DEFINE_string(
-    "header_file", "", "Which header file (and its associated files) to read."
-)
-
-flags.DEFINE_integer("lowcut", 1, "Frequency for low-side of EEG bandpass filter")
-flags.DEFINE_integer("highcut", 15, "Frequency for high-side of EEG bandpass filter")
-flags.DEFINE_string("plot_dir", "plots", "Where to store debugging plots")
-flags.DEFINE_multi_integer("bad_channels", [], "List of bad channels to remove.")
-flags.DEFINE_string("save_audio_file", "", "Where to save the BV recorded audio file")
-
-
 def save_fig(fig: plt.Figure, plot_dir: str, name: str) -> None:
     """Save a matplotlib figure to a file."""
     print("Writing data to", os.path.join(plot_dir, name))
@@ -646,19 +647,149 @@ def save_fig(fig: plt.Figure, plot_dir: str, name: str) -> None:
         os.makedirs(plot_dir)
     fig.savefig(os.path.join(plot_dir, name))
 
+#######################  Bootstrapping ############################
 
-def main(*argv):
-    raw = read_bv_raw_data(FLAGS.data_dir, FLAGS.header_file)
 
-    (audio_waveform, full_audio_waveform, eeg_data, sampling_rate) = extract_waveforms(
-        raw
-    )
+def bootstrap_sample(standard_locs: NDArray,
+                     deviant_locs: NDArray,
+                     count: int, num_trials: int = 30):
+    for _ in range(num_trials):
+        indices = list(np.arange(len(standard_locs)))
+        np.random.shuffle(indices)
+        standard_indices = indices[:count]
+        indices = list(np.arange(len(deviant_locs)))
+        np.random.shuffle(indices)
+        deviant_indices = indices[:count]
+        yield standard_locs[standard_indices], deviant_locs[deviant_indices]
 
-    if FLAGS.save_audio_file:
+
+def bootstrap_sample_erp(raw,
+                         cleaned_eeg: NDArray,
+                         standard_locs: ArrayLike,
+                         deviant_locs: ArrayLike,
+                         sampling_rate: float,
+                         pre_samples: int,
+                         count: int, num_trials: int = 30):
+    standard_locs = np.array(standard_locs)
+    deviant_locs = np.array(deviant_locs)
+    metric_mean = []
+    metric_std = []
+    bs_sizes = [len(standard_locs)//(2**i) for i in range(10)]
+    bs_sizes = [i for i in bs_sizes if i >= 32]
+    for size in bs_sizes:
+        diffs = []
+        for slocs, dlocs in bootstrap_sample(standard_locs, deviant_locs, size):
+            serp = accumulate_erp(
+                cleaned_eeg,
+                slocs,
+                sampling_rate,
+                pre_samples=pre_samples,
+                remove_baseline=True,
+            )
+            derp = accumulate_erp(
+                cleaned_eeg,
+                dlocs,
+                sampling_rate,
+                pre_samples=pre_samples,
+                remove_baseline=True,
+            )
+            normal_rms, deviant_rms, diff_rms = summarize_erp_diff(
+                serp, derp, find_channels(raw, "Cz"))  # Just Cz
+            ratio = diff_rms / normal_rms * 100
+            diffs.append(ratio)
+        metric_mean.append(np.mean(diffs))
+        metric_std.append(np.std(diffs))
+    return bs_sizes, metric_mean, metric_std
+
+
+def plot_bootstrap(key: str, bs_sizes: List[int],
+                   metric_mean: List[float], metric_std: List[float]):
+    plt.errorbar(bs_sizes, metric_mean, yerr=metric_std, label=key)
+    plt.xlabel('Number of Trials')
+    plt.ylabel('ERP RMS Diff Metric (%)')
+    plt.title('BV Oddball Performance vs. Experiment Size');
+
+#######################  Experiment Data ############################
+
+
+class OddballExperiment:
+    def __init__(
+        self,
+        data_dir: str,
+        header_file: str = "",
+        bad_channels: List[int] = [],
+        plot_dir: str = ""
+    ):
+        self.data_dir = data_dir
+        self.header_file = header_file
+        self.bad_channels = bad_channels
+        self.plot_dir = plot_dir
+
+
+experiments = {
+    'BV_wavefile': OddballExperiment(
+        'oddball_with_triggers_wavFile',
+        'P300TestWithWAV_20250702_1416.vhdr',
+        [0, 3, 7],
+        'plots/oddball_with_wav/'
+    ),
+    'BV_with_triggers': OddballExperiment(
+        'oddball_test_with_triggers',
+        'P300Test_20250702_1352.vhdr',
+        [5, 7],
+        'plots/oddball_with_triggers/'
+    ),
+    'BV_wavefile2': OddballExperiment(
+        'oddball_with_triggers_wavFile',
+        'Rupesh_Trial3.vhdr',
+        [0, 7],
+        'plots/oddball_with_wav2/'
+    ),
+    'CGX_Dry': OddballExperiment(
+        'oddball_with_triggers_wavFile',
+        'rupesh_0711_dryEEG.vhdr',
+        [2, 5, 6, 9],
+        'plots/oddball_dry_eeg/',
+    ),
+}
+
+
+def run_all_experiments(lowcut: float, highcut: float,
+                        bootstrap_trials: int = 0):
+    boot_results = {}
+    for name, exp in experiments.items():
+        print(f"\nRunning {name}")
+        res = run_one_experiment(exp.data_dir, exp.header_file, exp.plot_dir,
+                                 lowcut, highcut, exp.bad_channels)
+        if bootstrap_trials > 0:
+            (bs_sizes, metric_mean,
+             metric_std) = bootstrap_sample_erp(*res, bootstrap_trials)
+            boot_results[name] = (bs_sizes, metric_mean, metric_std)
+
+    if bootstrap_trials > 0:
+        plt.clf()
+        for name in boot_results:
+            bs_sizes, metric_mean, metric_std = boot_results[name]
+            plot_bootstrap(name, bs_sizes, metric_mean, metric_std)
+        plt.legend()
+        save_fig(plt.gcf(), '.', "AllExperimentBootstrap.png")
+
+
+def run_one_experiment(data_dir: str, header_file: str, plot_dir: str,
+                       lowcut: float, highcut: float,
+                       bad_channels: List[int] = [],
+                       save_audio_file: bool = False):
+    raw = read_bv_raw_data(data_dir, header_file)
+
+    (audio_waveform, full_audio_waveform, eeg_data,
+     sampling_rate) = extract_waveforms(raw)
+
+    if save_audio_file:
         wavfile.write(
-            FLAGS.save_audio_file,
+            save_audio_file,
             sampling_rate,
-            (audio_waveform / np.max(np.abs(audio_waveform)) * 32768).astype(np.int16),
+            (audio_waveform / np.max(np.abs(audio_waveform))
+             * 32768).astype(np.int16),
         )
 
     use_bv_event_timing = sampling_rate <= 8000
@@ -680,12 +811,13 @@ def main(*argv):
         print("Calculating event timing from StimTrac audio.")
         standard_tone, deviant_tone = find_tone_examples(audio_waveform)
         plot_audio_waveforms(
-            standard_tone.reshape(1, -1), deviant_tone.reshape(1, -1), sampling_rate
+            standard_tone.reshape(1, -1), deviant_tone.reshape(1, -1),
+            sampling_rate
         )
-        save_fig(plt.gcf(), FLAGS.plot_dir, "tones_found.png")
+        save_fig(plt.gcf(), plot_dir, "tones_found.png")
 
         standard_locs, deviant_locs = get_event_locs(
-            FLAGS.data_dir,
+            data_dir,
             full_audio_waveform,
             standard_tone,
             deviant_tone,
@@ -695,13 +827,13 @@ def main(*argv):
     rereferenced_eeg = rereference_eeg(eeg_data, "Average")
 
     filtered_eeg = filter_eeg(
-        rereferenced_eeg, FLAGS.lowcut, FLAGS.highcut, sampling_rate, axis=1, order=6
+        rereferenced_eeg, lowcut, highcut, sampling_rate, axis=1, order=6
     )
 
     ica, ica_components = model_with_ica(filtered_eeg.T, sampling_rate)
-    save_fig(plt.gcf(), FLAGS.plot_dir, "ICA_components.png")
+    save_fig(plt.gcf(), plot_dir, "ICA_components.png")
 
-    cleaned_eeg = filter_ica_channels(ica, ica_components, FLAGS.bad_channels).T
+    cleaned_eeg = filter_ica_channels(ica, ica_components, bad_channels).T
 
     pre_samples = int(0.05 * sampling_rate)
     if not use_bv_event_timing:
@@ -715,9 +847,10 @@ def main(*argv):
             full_audio_waveform, deviant_locs, pre_samples=pre_samples
         )
         plot_audio_waveforms(
-            standard_average_sound, deviant_average_sound, sampling_rate, pre_samples
+            standard_average_sound, deviant_average_sound,
+            sampling_rate, pre_samples
         )
-        save_fig(plt.gcf(), FLAGS.plot_dir, "ERP_audio_waveforms.png")
+        save_fig(plt.gcf(), plot_dir, "ERP_audio_waveforms.png")
 
     # Now we can calculate the ERP for the EEG data.
     normal_erp = accumulate_erp(
@@ -735,7 +868,7 @@ def main(*argv):
         remove_baseline=True,
     )
     plot_erp_images(normal_erp, deviant_erp, pre_samples, sampling_rate)
-    save_fig(plt.gcf(), FLAGS.plot_dir, "ERP_images.png")
+    save_fig(plt.gcf(), plot_dir, "ERP_images.png")
 
     plot_all_erp_channels(
         normal_erp,
@@ -744,7 +877,7 @@ def main(*argv):
         pre_samples=pre_samples,
         sampling_rate=sampling_rate,
     )
-    save_fig(plt.gcf(), FLAGS.plot_dir, "ERP_all_channels.png")
+    save_fig(plt.gcf(), plot_dir, "ERP_all_channels.png")
 
     plot_all_erp_diff(
         normal_erp,
@@ -752,9 +885,9 @@ def main(*argv):
         find_channels(raw, "Cz"),
         sampling_rate=sampling_rate,
         pre_samples=pre_samples,
-        bad_channels=FLAGS.bad_channels,
+        bad_channels=bad_channels,
     )
-    save_fig(plt.gcf(), FLAGS.plot_dir, "ERP_channel_dif.png")
+    save_fig(plt.gcf(), plot_dir, "ERP_channel_dif.png")
 
     normal_rms, deviant_rms, diff_rms = summarize_erp_diff(
         normal_erp, deviant_erp, find_channels(raw, "Cz")  # Just Cz
@@ -763,6 +896,41 @@ def main(*argv):
     print(f"Deviant RMS: {deviant_rms:.3g} uV")
     print(f"Diff RMS: {diff_rms:.3g} uV")
     print(f"Diff to Standard: {diff_rms / normal_rms * 100:.2f}%")
+    return (raw, cleaned_eeg, standard_locs, deviant_locs,
+            sampling_rate, pre_samples)
+
+FLAGS = flags.FLAGS
+
+flags.DEFINE_string(
+    "data_dir", "/tmp", "Directory where the raw EEG BV dat is stored.")
+flags.DEFINE_string(
+    "header_file", "", "Which header file (and its associated files) to read."
+)
+
+flags.DEFINE_boolean(
+    "runall", False, "Whether to process all experiments.")
+flags.DEFINE_integer(
+    "lowcut", 1, "Frequency for low-side of EEG bandpass filter")
+flags.DEFINE_integer(
+    "highcut", 15, "Frequency for high-side of EEG bandpass filter")
+flags.DEFINE_string(
+    "plot_dir", "plots", "Where to store debugging plots")
+flags.DEFINE_multi_integer(
+    "bad_channels", [], "List of bad channels to remove.")
+flags.DEFINE_string(
+    "save_audio_file", "", "Where to save the BV recorded audio file")
+flags.DEFINE_integer(
+    'bootstrap_trials', 30, 'Number of bootstrap trials to run')
+
+
+def main(*argv):
+    if FLAGS.runall:
+        run_all_experiments(FLAGS.lowcut, FLAGS.highcut,
+                            FLAGS.bootstrap_trials)
+    else:
+        run_one_experiment(FLAGS.data_dir, FLAGS.header_file, FLAGS.plot_dir,
+                           FLAGS.lowcut, FLAGS.highcut, FLAGS.bad_channels,
+                           FLAGS.save_audio_file)
 
 
 if __name__ == "__main__":
