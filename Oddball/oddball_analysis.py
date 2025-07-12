@@ -3,7 +3,7 @@ import glob
 import os
 from collections import Counter
 from itertools import groupby
-from typing import Any, List, Tuple
+from typing import Any, List, Tuple, Union
 
 import matplotlib.pyplot as plt
 import mne
@@ -87,24 +87,40 @@ def read_bv_raw_data(
     return raw
 
 
+def find_channels(raw, channels: Union[str, List[str]]) -> List[int]:
+    if isinstance(channels, str):
+        channels = [channels]
+    return [raw.ch_names.index(channel) for channel in channels]
+
+
 def extract_waveforms(
     raw,  # mne.io.brainvision.brainvision.RawBrainVision,
 ) -> Tuple[NDArray, NDArray, NDArray, float]:
     """Extract the audio and EEG data from the BV file."""
     # Access the EEG data array
     eeg_data = raw.get_data()
-    print(f"Shape of EEG data: {eeg_data.shape}")
+    print(f"Shape of Raw EEG data: {eeg_data.shape}")
 
-    full_audio_waveform = eeg_data[-1:, :].copy()
     sampling_rate = int(
         raw.info["sfreq"]
     )  # Getting the sampling rate from the raw object
 
-    eeg_data = eeg_data[:31, :]  # Remove the audio channel
-    eeg_data = np.concatenate((eeg_data, np.zeros((1, eeg_data.shape[1]))), axis=0)
-    raw.ch_names[31] = "Cz"
+    if raw.ch_names[31] == "Soundwave":
+        # BV records the audio in the last channel (since it is Cz and
+        # removed as a reference)
+        full_audio_waveform = eeg_data[-1:, :].copy()
+        eeg_data = eeg_data[:31, :]  # Remove the audio channel
+        eeg_data = np.concatenate((eeg_data, np.zeros((1, eeg_data.shape[1]))), axis=0)
+        raw.ch_names[31] = "Cz"
+        audio_waveform = full_audio_waveform[:, : 30 * sampling_rate]
+    elif raw.ch_names[-1] == "TRIGGER":
+        # This looks like CGX data
+        eeg_data = eeg_data[:32, :]
+        full_audio_waveform = None
+        audio_waveform = None
+    else:
+        raise ValueError(f"Unknown EEG data type.  Channels are {raw.ch_names}")
 
-    audio_waveform = full_audio_waveform[:, : 30 * sampling_rate]
     return audio_waveform, full_audio_waveform, eeg_data, sampling_rate
 
 
@@ -202,6 +218,17 @@ def get_event_locs(
             find_all_tone_starts(full_audio_waveform[0, :], deviant_tone)
             / sampling_rate
         )
+    return standard_locs, deviant_locs
+
+
+def read_cgx_events(raw) -> Tuple[List[float], List[float]]:
+    trigger = raw.get_data("TRIGGER")[0, :]
+    standard_locs = np.where(np.logical_and(trigger[1:] == 1, trigger[:-1] == 0))[0]
+    deviant_locs = np.where(np.logical_and(trigger[1:] == 2, trigger[:-1] == 0))[0]
+
+    assert len(standard_locs) >= len(deviant_locs)
+    standard_locs = standard_locs / raw.info["sfreq"]
+    deviant_locs = deviant_locs / raw.info["sfreq"]
     return standard_locs, deviant_locs
 
 
@@ -627,12 +654,6 @@ def main(*argv):
     (audio_waveform, full_audio_waveform, eeg_data, sampling_rate) = extract_waveforms(
         raw
     )
-    print(
-        "Found audio waveform of length ",
-        full_audio_waveform.shape[1] / sampling_rate,
-        " seconds",
-    )
-    print("Audio sampling rate: ", sampling_rate)
 
     if FLAGS.save_audio_file:
         wavfile.write(
@@ -644,10 +665,18 @@ def main(*argv):
     use_bv_event_timing = sampling_rate <= 8000
 
     if use_bv_event_timing:
-        print("Using BV event timing.")
-        standard_locs, deviant_locs, _ = read_bv_events(raw)
-        standard_tone = None
-        deviant_tone = None
+        if raw.ch_names[-1] == "TRIGGER":
+            print("Using CGX event timing.")
+            standard_locs, deviant_locs = read_cgx_events(raw)
+            standard_tone = None
+            deviant_tone = None
+        elif raw.ch_names[-1] == "Cz":
+            print("Using BV event timing.")
+            standard_locs, deviant_locs, _ = read_bv_events(raw)
+            standard_tone = None
+            deviant_tone = None
+        else:
+            raise ValueError(f"Unknown data format: {raw.ch_names[-1]}")
     else:
         print("Calculating event timing from StimTrac audio.")
         standard_tone, deviant_tone = find_tone_examples(audio_waveform)
@@ -721,14 +750,15 @@ def main(*argv):
     plot_all_erp_diff(
         normal_erp,
         deviant_erp,
-        [31],
+        find_channels(raw, "Cz"),
+        sampling_rate=sampling_rate,
         pre_samples=pre_samples,
         bad_channels=FLAGS.bad_channels,
     )
     save_fig(plt.gcf(), FLAGS.plot_dir, "ERP_channel_dif.png")
 
     normal_rms, deviant_rms, diff_rms = summarize_erp_diff(
-        normal_erp, deviant_erp, [31]  # Just Cz
+        normal_erp, deviant_erp, find_channels(raw, "Cz")  # Just Cz
     )
     print(f"Standard RMS: {normal_rms:3g} uV")
     print(f"Deviant RMS: {deviant_rms:.3g} uV")
