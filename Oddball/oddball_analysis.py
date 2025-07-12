@@ -28,6 +28,8 @@ from scipy.signal import (
 from sklearn.decomposition import FastICA
 from sklearn.mixture import GaussianMixture
 
+#######################  Synthesize Audio Data   ############################
+
 
 def create_oddball_sequence(
     fs=25000,  # Sampling frequency (Hz)
@@ -63,6 +65,7 @@ def create_oddball_sequence(
     return audio, trial_sequence
 
 #######################  Read Experimental Data  ############################
+
 
 def read_bv_raw_data(
     data_dir: str, header_file: str
@@ -126,6 +129,8 @@ def extract_waveforms(
 
     return audio_waveform, full_audio_waveform, eeg_data, sampling_rate
 
+#######################  Extract the Tone Locations ############################
+
 
 def teeger(x: NDArray) -> NDArray:
     """Compute the Teeger energy operator over a waveform.
@@ -137,36 +142,6 @@ def teeger(x: NDArray) -> NDArray:
     return x[1:-1] ** 2 - x[:-2] * x[2:]
 
     # Helper function
-
-
-def rereference_eeg(
-    eeg_data: NDArray, reference_channels: Union[str, List[int]] = "Average"
-) -> NDArray:
-    """Re-reference the EEG data, which is supplied in shape
-    num_channels x num_times
-    """
-    assert eeg_data.ndim == 2
-    assert eeg_data.shape[1] > eeg_data.shape[0]  # More time samples than channels
-    if reference_channels == "Average":
-        print("Rereferencing data to the average of all channels")
-        reference = np.mean(eeg_data, axis=0, keepdims=True)
-        rereferenced_eeg = eeg_data - reference
-    elif reference_channels == ["XXXCz"]:
-        print("Rereferencing data to Cz")
-        # Restore the missing Cz channel
-        rereferenced_eeg = np.concatenate(
-            (eeg_data, np.zeros((1, eeg_data.shape[1]))), axis=0
-        )
-        rereferenced_eeg[31, :] = np.mean(rereferenced_eeg[:31, :], axis=0)
-    elif len(reference_channels):
-        print("Rereferencing data to the mean of the listed channels")
-        # Compute mean of the reference channels
-        reference = np.mean(eeg_data[reference_channels, :], axis=0, keepdims=True)
-        rereferenced_eeg = eeg_data - reference
-    else:
-        raise ValueError(f"Unknown reference_channels: {reference_channels}")
-
-    return rereferenced_eeg
 
 
 def tone_times_from_csv(csv_file_path: str) -> Tuple[List[float], List[float]]:
@@ -392,6 +367,38 @@ def find_all_tone_starts(
     )
     return peak_indices
 
+#######################  Extract the Tone Locations ############################
+
+
+def rereference_eeg(
+    eeg_data: NDArray, reference_channels: Union[str, List[int]] = "Average"
+) -> NDArray:
+    """Re-reference the EEG data, which is supplied in shape
+    num_channels x num_times
+    """
+    assert eeg_data.ndim == 2
+    assert eeg_data.shape[1] > eeg_data.shape[0]  # More time samples than channels
+    if reference_channels == "Average":
+        print("Rereferencing data to the average of all channels")
+        reference = np.mean(eeg_data, axis=0, keepdims=True)
+        rereferenced_eeg = eeg_data - reference
+    elif reference_channels == ["XXXCz"]:
+        print("Rereferencing data to Cz")
+        # Restore the missing Cz channel
+        rereferenced_eeg = np.concatenate(
+            (eeg_data, np.zeros((1, eeg_data.shape[1]))), axis=0
+        )
+        rereferenced_eeg[31, :] = np.mean(rereferenced_eeg[:31, :], axis=0)
+    elif len(reference_channels):
+        print("Rereferencing data to the mean of the listed channels")
+        # Compute mean of the reference channels
+        reference = np.mean(eeg_data[reference_channels, :], axis=0, keepdims=True)
+        rereferenced_eeg = eeg_data - reference
+    else:
+        raise ValueError(f"Unknown reference_channels: {reference_channels}")
+
+    return rereferenced_eeg
+
 
 def butter_bandpass(lowcut: float, highcut: float, fs: float = 25000, order=2):
     b, a = butter(order, [lowcut, highcut], fs, btype="band")
@@ -418,6 +425,8 @@ def filter_eeg(
         plt.grid("on")
     y = sosfiltfilt(sos, data, axis=axis)
     return y
+
+#######################  ICA   ############################
 
 
 def model_with_ica(
@@ -467,6 +476,8 @@ def filter_ica_channels(
     cleaned_eeg = ica.inverse_transform(ica_components2)
     return cleaned_eeg
 
+#######################  Finding ERPs   ############################
+
 
 def accumulate_erp(
     eeg_data: NDArray,
@@ -515,6 +526,8 @@ def downsample_eeg(eeg_data: NDArray, sampling_rate: float,
     for i in range(eeg_data.shape[0]):
         resampled_eeg_data[i, :] = resample(eeg_data[i, :], num_new_samples)
     return resampled_eeg_data
+
+#######################  Plotting   ############################
 
 
 def plot_audio_waveforms(
