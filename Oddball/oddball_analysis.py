@@ -637,16 +637,27 @@ def plot_all_erp_diff(
     plt.legend()
 
 
-def summarize_erp_diff(normal_erp, deviant_erp, channels: List[int]):
+def summarize_erp_diff(
+    normal_erp, deviant_erp, channels: List[int], sampling_rate: float, pre_samples: int
+):
     """Summarize the difference between the standard and deviant ERPs."""
 
     def rms(x):
         return np.sqrt(np.mean(x * x))
 
+    # Calculate ratio of energy in the difference (standard vs. oddball)
+    # compared to the standard ERP.
     normal_average = np.mean(normal_erp[channels, :], axis=0)
     deviant_average = np.mean(deviant_erp[channels, :], axis=0)
     diff = deviant_average - normal_average
-    return rms(normal_average), rms(deviant_average), rms(diff)
+
+    # Bussalb's metric (based on wave 1)
+    wave1rms = rms(
+        normal_erp[:, int(0.050 * sampling_rate) : int(0.150 * sampling_rate)]
+    )
+    noise_rms = rms(normal_erp[:, :pre_samples])
+    wave1noise = wave1rms / noise_rms
+    return rms(normal_average), rms(deviant_average), rms(diff), wave1noise
 
 
 def save_fig(fig: plt.Figure, plot_dir: str, name: str) -> None:
@@ -706,11 +717,12 @@ def bootstrap_sample_erp(
                 pre_samples=pre_samples,
                 remove_baseline=True,
             )
-            normal_rms, deviant_rms, diff_rms = summarize_erp_diff(
-                serp, derp, find_channels(raw, "Cz")
+            normal_rms, deviant_rms, diff_rms, wave1noise = summarize_erp_diff(
+                serp, derp, find_channels(raw, "Cz"), sampling_rate, pre_samples
             )  # Just Cz
             ratio = diff_rms / normal_rms * 100
-            diffs.append(ratio)
+            # diffs.append(ratio)
+            diffs.append(wave1noise)
         metric_mean.append(np.mean(diffs))
         metric_std.append(np.std(diffs))
     return bs_sizes, metric_mean, metric_std
@@ -914,33 +926,19 @@ def run_one_experiment(
     )
     save_fig(plt.gcf(), plot_dir, "ERP_channel_dif.png")
 
-    normal_rms, deviant_rms, diff_rms = summarize_erp_diff(
-        normal_erp, deviant_erp, find_channels(raw, "Cz")  # Just Cz
+    normal_rms, deviant_rms, diff_rms, wave1noise = summarize_erp_diff(
+        normal_erp,
+        deviant_erp,
+        find_channels(raw, "Cz"),  # Just Cz
+        sampling_rate,
+        pre_samples,
     )
-
-    # Calculate the RMS of the standard ERPs, and divide by the RMS of the
-    # raw (averaged) responses. The average noise RMS is proportional to i/
-    # sqrt(N). To match Bussalb's (2018) results, which were done with 360
-    # trials, we multiply by sqrt(N), where N is the number of standard
-    # tones in each of our # experiments, and then divide by sqrt(360). We
-    # do this so we can directly compare the data we collected with Table
-    # 2 of Bussalb's paper.
-    erp_rms = np.sqrt(
-        np.mean(
-            normal_erp[:, int(0.050 * sampling_rate) :
-                          int(0.150 * sampling_rate)] ** 2,
-            axis=1, # Average over time
-        )
-    )
-    normalization = np.sqrt(len(standard_locs))/np.sqrt(360)
-    normalization = 1/np.sqrt(360)
-    noise_rms = np.sqrt(np.mean(cleaned_eeg**2, axis=1))*normalization
 
     print(f"Standard RMS: {normal_rms:3g} uV")
     print(f"Deviant RMS: {deviant_rms:.3g} uV")
     print(f"Diff RMS: {diff_rms:.3g} uV")
     print(f"Diff to Standard: {diff_rms / normal_rms * 100:.2f}%")
-    print(f"Normal RMS to Noise RMS: {erp_rms/noise_rms}")
+    print(f"Normal RMS to Noise RMS: {wave1noise}")
     return (raw, cleaned_eeg, standard_locs, deviant_locs, sampling_rate, pre_samples)
 
 
