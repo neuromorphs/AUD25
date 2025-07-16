@@ -426,6 +426,7 @@ def filter_eeg(
 
 
 #######################  ICA   ############################
+# See also: https://labeling.ucsd.edu/tutorial/labels
 
 
 def model_with_ica(
